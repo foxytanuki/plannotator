@@ -83,6 +83,30 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
     echo "  source ${shell_config}"
 fi
 
+# Validate plugin hooks.json if plugin is already installed
+PLUGIN_HOOKS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/marketplaces/plannotator/apps/hook/hooks/hooks.json"
+if [ -f "$PLUGIN_HOOKS" ]; then
+    cat > "$PLUGIN_HOOKS" << 'HOOKS_EOF'
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "plannotator",
+            "timeout": 345600
+          }
+        ]
+      }
+    ]
+  }
+}
+HOOKS_EOF
+    echo "Updated plugin hooks at ${PLUGIN_HOOKS}"
+fi
+
 # Clear any cached OpenCode plugin to force fresh download on next run
 rm -rf "$HOME/.cache/opencode/node_modules/@plannotator" "$HOME/.bun/install/cache/@plannotator" 2>/dev/null || true
 
@@ -172,3 +196,20 @@ echo "  /plugin marketplace add backnotprop/plannotator"
 echo "  /plugin install plannotator@plannotator"
 echo ""
 echo "The /plannotator-review and /plannotator-annotate commands are ready to use after you restart Claude Code!"
+
+# Warn if plannotator is configured in both settings.json hooks AND the plugin (causes double execution)
+# Only warn when the plugin is installed — manual-only users won't have overlap
+CLAUDE_SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+if [ -f "$PLUGIN_HOOKS" ] && [ -f "$CLAUDE_SETTINGS" ] && grep -q '"command".*plannotator' "$CLAUDE_SETTINGS" 2>/dev/null; then
+    echo ""
+    echo "⚠️ ⚠️ ⚠️  WARNING: DUPLICATE HOOK DETECTED  ⚠️ ⚠️ ⚠️"
+    echo ""
+    echo "  plannotator was found in your settings.json hooks:"
+    echo "  $CLAUDE_SETTINGS"
+    echo ""
+    echo "  This will cause plannotator to run TWICE on each plan review."
+    echo "  Remove the plannotator hook from settings.json and rely on the"
+    echo "  plugin instead (installed automatically via marketplace)."
+    echo ""
+    echo "⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️"
+fi

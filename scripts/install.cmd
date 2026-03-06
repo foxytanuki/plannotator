@@ -127,6 +127,34 @@ if !ERRORLEVEL! neq 0 (
     echo   set PATH=%%PATH%%;!INSTALL_DIR!
 )
 
+REM Validate plugin hooks.json if plugin is already installed
+if defined CLAUDE_CONFIG_DIR (
+    set "PLUGIN_HOOKS=%CLAUDE_CONFIG_DIR%\plugins\marketplaces\plannotator\apps\hook\hooks\hooks.json"
+) else (
+    set "PLUGIN_HOOKS=%USERPROFILE%\.claude\plugins\marketplaces\plannotator\apps\hook\hooks\hooks.json"
+)
+if exist "!PLUGIN_HOOKS!" (
+    (
+echo {
+echo   "hooks": {
+echo     "PermissionRequest": [
+echo       {
+echo         "matcher": "ExitPlanMode",
+echo         "hooks": [
+echo           {
+echo             "type": "command",
+echo             "command": "plannotator",
+echo             "timeout": 345600
+echo           }
+echo         ]
+echo       }
+echo     ]
+echo   }
+echo }
+    ) > "!PLUGIN_HOOKS!"
+    echo Updated plugin hooks at !PLUGIN_HOOKS!
+)
+
 REM Install /review slash command
 if defined CLAUDE_CONFIG_DIR (
     set "CLAUDE_COMMANDS_DIR=%CLAUDE_CONFIG_DIR%\commands"
@@ -178,5 +206,29 @@ echo   /plugin marketplace add backnotprop/plannotator
 echo   /plugin install plannotator@plannotator
 echo.
 echo The /plannotator-review and /plannotator-annotate commands are ready to use!
+
+REM Warn if plannotator is configured in both settings.json hooks AND the plugin (causes double execution)
+REM Only warn when the plugin is installed — manual-only users won't have overlap
+if defined CLAUDE_CONFIG_DIR (
+    set "CLAUDE_SETTINGS=%CLAUDE_CONFIG_DIR%\settings.json"
+) else (
+    set "CLAUDE_SETTINGS=%USERPROFILE%\.claude\settings.json"
+)
+if exist "!PLUGIN_HOOKS!" if exist "!CLAUDE_SETTINGS!" (
+    findstr /r /c:"\"command\".*plannotator" "!CLAUDE_SETTINGS!" >nul 2>&1
+    if !ERRORLEVEL! equ 0 (
+        echo.
+        echo WARNING: DUPLICATE HOOK DETECTED
+        echo.
+        echo   plannotator was found in your settings.json hooks:
+        echo   !CLAUDE_SETTINGS!
+        echo.
+        echo   This will cause plannotator to run TWICE on each plan review.
+        echo   Remove the plannotator hook from settings.json and rely on the
+        echo   plugin instead ^(installed automatically via marketplace^).
+        echo.
+    )
+)
+
 echo.
 exit /b 0
