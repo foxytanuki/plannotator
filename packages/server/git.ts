@@ -201,7 +201,7 @@ async function getUntrackedFileDiffs(srcPrefix = 'a/', dstPrefix = 'b/', cwd?: s
  */
 const WORKTREE_SUB_TYPES = new Set(["uncommitted", "last-commit", "branch"]);
 
-function parseWorktreeDiffType(diffType: string): { path: string; subType: string } | null {
+export function parseWorktreeDiffType(diffType: string): { path: string; subType: string } | null {
   if (!diffType.startsWith("worktree:")) return null;
   const rest = diffType.slice("worktree:".length);
   const lastColon = rest.lastIndexOf(":");
@@ -348,4 +348,73 @@ export async function runGitDiff(
   }
 
   return { patch, label };
+}
+
+/**
+ * Get old and new file contents for a given diff type.
+ * Used by the expandable context feature to feed full file content to @pierre/diffs.
+ */
+export async function getFileContentsForDiff(
+  diffType: DiffType,
+  defaultBranch: string,
+  filePath: string,
+  oldPath?: string,
+  cwd?: string,
+): Promise<{ oldContent: string | null; newContent: string | null }> {
+  const oldFilePath = oldPath || filePath;
+
+  async function gitShow(ref: string, path: string): Promise<string | null> {
+    try {
+      const cmd = $`git show ${ref}:${path}`.quiet();
+      return (cwd ? await cmd.cwd(cwd) : await cmd).text();
+    } catch {
+      return null;
+    }
+  }
+
+  async function readWorkingTree(path: string): Promise<string | null> {
+    try {
+      const fullPath = cwd ? `${cwd}/${path}` : path;
+      return await Bun.file(fullPath).text();
+    } catch {
+      return null;
+    }
+  }
+
+  // Determine the effective diff type (handle worktree prefix)
+  let effectiveDiffType = diffType as string;
+  if (diffType.startsWith("worktree:")) {
+    const parsed = parseWorktreeDiffType(diffType);
+    if (!parsed) return { oldContent: null, newContent: null };
+    cwd = parsed.path;
+    effectiveDiffType = parsed.subType;
+  }
+
+  let oldContent: string | null = null;
+  let newContent: string | null = null;
+
+  switch (effectiveDiffType) {
+    case "uncommitted":
+      oldContent = await gitShow("HEAD", oldFilePath);
+      newContent = await readWorkingTree(filePath);
+      break;
+    case "staged":
+      oldContent = await gitShow("HEAD", oldFilePath);
+      newContent = await gitShow(":0", filePath);
+      break;
+    case "unstaged":
+      oldContent = await gitShow(":0", oldFilePath);
+      newContent = await readWorkingTree(filePath);
+      break;
+    case "last-commit":
+      oldContent = await gitShow("HEAD~1", oldFilePath);
+      newContent = await gitShow("HEAD", filePath);
+      break;
+    case "branch":
+      oldContent = await gitShow(defaultBranch, oldFilePath);
+      newContent = await gitShow("HEAD", filePath);
+      break;
+  }
+
+  return { oldContent, newContent };
 }

@@ -813,6 +813,7 @@ const ReviewApp: React.FC = () => {
               <DiffViewer
                 patch={activeFile.patch}
                 filePath={activeFile.path}
+                oldPath={activeFile.oldPath}
                 diffStyle={diffStyle}
                 annotations={activeFileAnnotations}
                 selectedAnnotationId={selectedAnnotationId}

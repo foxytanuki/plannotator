@@ -10,7 +10,7 @@
  */
 
 import { isRemoteSession, getServerPort } from "./remote";
-import { type DiffType, type GitContext, runGitDiff, getWorktreeDiffOptions } from "./git";
+import { type DiffType, type GitContext, runGitDiff, getWorktreeDiffOptions, getFileContentsForDiff } from "./git";
 import { getRepoInfo } from "./repo";
 import { handleImage, handleUpload, handleAgents, handleServerReady, handleDraftSave, handleDraftLoad, handleDraftDelete, type OpencodeClient } from "./shared-handlers";
 import { contentHash, deleteDraft } from "./draft";
@@ -196,6 +196,29 @@ export async function startReviewServer(
                 err instanceof Error ? err.message : "Failed to switch diff";
               return Response.json({ error: message }, { status: 500 });
             }
+          }
+
+          // API: Get file content for expandable diff context
+          if (url.pathname === "/api/file-content" && req.method === "GET") {
+            const filePath = url.searchParams.get("path");
+            if (!filePath) {
+              return Response.json({ error: "Missing path" }, { status: 400 });
+            }
+            if (filePath.includes("..") || filePath.startsWith("/")) {
+              return Response.json({ error: "Invalid path" }, { status: 400 });
+            }
+            const oldPath = url.searchParams.get("oldPath") || undefined;
+            if (oldPath && (oldPath.includes("..") || oldPath.startsWith("/"))) {
+              return Response.json({ error: "Invalid path" }, { status: 400 });
+            }
+            const defaultBranch = gitContext?.defaultBranch || "main";
+            const result = await getFileContentsForDiff(
+              currentDiffType,
+              defaultBranch,
+              filePath,
+              oldPath,
+            );
+            return Response.json(result);
           }
 
           // API: Serve images (local paths or temp uploads)
