@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { parseMarkdownToBlocks, exportAnnotations, exportLinkedDocAnnotations, exportEditorAnnotations, extractFrontmatter, Frontmatter } from '@plannotator/ui/utils/parser';
+import { parseMarkdownToBlocks, exportAnnotations, exportLinkedDocAnnotations, exportEditorAnnotations, extractFrontmatter, wrapFeedbackForAgent, Frontmatter } from '@plannotator/ui/utils/parser';
 import { Viewer, ViewerHandle } from '@plannotator/ui/components/Viewer';
 import { AnnotationPanel } from '@plannotator/ui/components/AnnotationPanel';
 import { ExportModal } from '@plannotator/ui/components/ExportModal';
@@ -1041,7 +1041,7 @@ const App: React.FC = () => {
                           className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors flex items-center gap-2"
                         >
                           <svg className="w-3.5 h-3.5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m4-4l-4 4m0 0l-4-4m4 4V4" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M15 12H3" />
                           </svg>
                           Import Review
                         </button>
@@ -1229,6 +1229,9 @@ const App: React.FC = () => {
             editorAnnotations={editorAnnotations}
             onDeleteEditorAnnotation={deleteEditorAnnotation}
             onClose={() => setIsPanelOpen(false)}
+            onQuickCopy={async () => {
+              await navigator.clipboard.writeText(wrapFeedbackForAgent(annotationsOutput));
+            }}
           />
         </div>
 

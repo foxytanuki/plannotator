@@ -9,6 +9,7 @@
 import React, { useState, useEffect } from 'react';
 import { getObsidianSettings, getEffectiveVaultPath } from '../utils/obsidian';
 import { getBearSettings } from '../utils/bear';
+import { wrapFeedbackForAgent } from '../utils/parser';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -95,7 +96,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   };
 
   const handleCopyAnnotations = async () => {
-    await handleCopy(annotationsOutput, 'annotations');
+    await handleCopy(wrapFeedbackForAgent(annotationsOutput), 'annotations');
   };
 
   // Whether the hash URL is large enough to warrant a short URL option

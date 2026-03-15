@@ -613,7 +613,8 @@ const ReviewApp: React.FC = () => {
             <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-secondary/15 text-secondary hidden md:inline">
               Code Review
             </span>
-            {origin && (
+            {/* Agent badge — unreliable for now across multiple harnesses */}
+            {/* {origin && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium hidden md:inline ${
                 origin === 'claude-code'
                   ? 'bg-orange-500/15 text-orange-400'
@@ -623,7 +624,7 @@ const ReviewApp: React.FC = () => {
               }`}>
                 {origin === 'claude-code' ? 'Claude Code' : origin === 'pi' ? 'Pi' : 'OpenCode'}
               </span>
-            )}
+            )} */}
             {repoInfo && (
               <>
                 <span className="text-muted-foreground/40 hidden md:inline">|</span>

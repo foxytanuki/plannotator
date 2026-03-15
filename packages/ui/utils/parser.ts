@@ -243,6 +243,11 @@ export const parseMarkdownToBlocks = (markdown: string): Block[] => {
   return blocks;
 };
 
+/** Wrap feedback output with the deny preamble for pasting into agent sessions */
+export const wrapFeedbackForAgent = (feedback: string): string => {
+  return `YOUR PLAN WAS NOT APPROVED. You MUST revise the plan to address ALL of the feedback below before calling ExitPlanMode again. Do not resubmit the same plan — use the Edit tool to make targeted changes to the plan file first.\n\n${feedback}`;
+};
+
 export const exportAnnotations = (blocks: Block[], annotations: any[], globalAttachments: ImageAttachment[] = []): string => {
   if (annotations.length === 0 && globalAttachments.length === 0) {
     return 'No changes detected.';

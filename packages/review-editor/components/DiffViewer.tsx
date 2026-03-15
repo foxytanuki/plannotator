@@ -53,7 +53,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   canStage = false,
   stageError,
 }) => {
-  const { theme } = useTheme();
+  const { theme, colorTheme, resolvedMode } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
 
   const toolbar = useAnnotationToolbar({ patch, filePath, onLineSelection, onAddAnnotation, onEditAnnotation });
@@ -175,13 +175,36 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
     );
   }, [toolbar.handleLineSelectionEnd]);
 
-  // Determine theme for @pierre/diffs
-  const pierreTheme = useMemo(() => {
-    const effectiveTheme = theme === 'system'
-      ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
-      : theme;
-    return effectiveTheme === 'light' ? 'pierre-light' : 'pierre-dark';
-  }, [theme]);
+  // Inject resolved colors into @pierre/diffs shadow DOM.
+  // CSS custom properties don't cross the shadow boundary, so we read computed
+  // values and pass them via unsafeCSS. Single state object avoids split renders.
+  const [pierreTheme, setPierreTheme] = useState<{ type: 'dark' | 'light'; css: string }>({ type: 'dark', css: '' });
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      const styles = getComputedStyle(document.documentElement);
+      const bg = styles.getPropertyValue('--background').trim();
+      const fg = styles.getPropertyValue('--foreground').trim();
+      const muted = styles.getPropertyValue('--muted').trim();
+      if (!bg || !fg) return;
+      setPierreTheme({
+        type: resolvedMode,
+        css: `
+          :host, [data-diff], [data-file], [data-diffs-header], [data-error-wrapper], [data-virtualizer-buffer] {
+            --diffs-bg: ${bg} !important;
+            --diffs-fg: ${fg} !important;
+            --diffs-dark-bg: ${bg};
+            --diffs-light-bg: ${bg};
+            --diffs-dark: ${fg};
+            --diffs-light: ${fg};
+          }
+          pre, code { background-color: ${bg} !important; }
+          [data-file-info] { background-color: ${muted} !important; }
+          [data-column-number] { background-color: ${bg} !important; }
+        `,
+      });
+    });
+  }, [resolvedMode, colorTheme]);
 
   return (
     <div ref={containerRef} className="h-full overflow-auto relative" onMouseMove={toolbar.handleMouseMove}>
@@ -202,8 +225,8 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           key={filePath}
           fileDiff={augmentedDiff}
           options={{
-            theme: pierreTheme,
-            themeType: 'dark',
+            themeType: pierreTheme.type,
+            unsafeCSS: pierreTheme.css,
             diffStyle,
             diffIndicators: 'bars',
             hunkSeparators: 'line-info',
