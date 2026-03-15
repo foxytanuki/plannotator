@@ -3,6 +3,7 @@ import { FileDiff } from '@pierre/diffs/react';
 import { getSingularPatch, processFile } from '@pierre/diffs';
 import { CodeAnnotation, CodeAnnotationType, SelectedLineRange, DiffAnnotationMetadata } from '@plannotator/ui/types';
 import { useTheme } from '@plannotator/ui/components/ThemeProvider';
+import { CommentPopover } from '@plannotator/ui/components/CommentPopover';
 import { detectLanguage } from '../utils/detectLanguage';
 import { useAnnotationToolbar } from '../hooks/useAnnotationToolbar';
 import { FileHeader } from './FileHeader';
@@ -20,6 +21,7 @@ interface DiffViewerProps {
   pendingSelection: SelectedLineRange | null;
   onLineSelection: (range: SelectedLineRange | null) => void;
   onAddAnnotation: (type: CodeAnnotationType, text?: string, suggestedCode?: string, originalCode?: string) => void;
+  onAddFileComment: (text: string) => void;
   onEditAnnotation: (id: string, text?: string, suggestedCode?: string, originalCode?: string) => void;
   onSelectAnnotation: (id: string | null) => void;
   onDeleteAnnotation: (id: string) => void;
@@ -42,6 +44,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   pendingSelection,
   onLineSelection,
   onAddAnnotation,
+  onAddFileComment,
   onEditAnnotation,
   onSelectAnnotation,
   onDeleteAnnotation,
@@ -55,6 +58,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
 }) => {
   const { theme, colorTheme, resolvedMode } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
+  const [fileCommentAnchor, setFileCommentAnchor] = useState<HTMLElement | null>(null);
 
   const toolbar = useAnnotationToolbar({ patch, filePath, onLineSelection, onAddAnnotation, onEditAnnotation });
 
@@ -118,18 +122,20 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
 
   // Map annotations to @pierre/diffs format
   const lineAnnotations = useMemo(() => {
-    return annotations.map(ann => ({
-      side: ann.side === 'new' ? 'additions' as const : 'deletions' as const,
-      lineNumber: ann.lineEnd,
-      metadata: {
-        annotationId: ann.id,
-        type: ann.type,
-        text: ann.text,
-        suggestedCode: ann.suggestedCode,
-        originalCode: ann.originalCode,
-        author: ann.author,
-      } as DiffAnnotationMetadata,
-    }));
+    return annotations
+      .filter(ann => (ann.scope ?? 'line') === 'line')
+      .map(ann => ({
+        side: ann.side === 'new' ? 'additions' as const : 'deletions' as const,
+        lineNumber: ann.lineEnd,
+        metadata: {
+          annotationId: ann.id,
+          type: ann.type,
+          text: ann.text,
+          suggestedCode: ann.suggestedCode,
+          originalCode: ann.originalCode,
+          author: ann.author,
+        } as DiffAnnotationMetadata,
+      }));
   }, [annotations]);
 
   // Handle edit: find annotation and start editing in toolbar
@@ -218,6 +224,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
         onStage={onStage}
         canStage={canStage}
         stageError={stageError}
+        onFileComment={setFileCommentAnchor}
       />
 
       <div className="p-4">
@@ -269,6 +276,19 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           modalLayout={toolbar.modalLayout}
           setModalLayout={toolbar.setModalLayout}
           onClose={() => toolbar.setShowCodeModal(false)}
+        />
+      )}
+
+      {fileCommentAnchor && (
+        <CommentPopover
+          anchorEl={fileCommentAnchor}
+          contextText={filePath.split('/').pop() || filePath}
+          isGlobal={false}
+          onSubmit={(text) => {
+            onAddFileComment(text);
+            setFileCommentAnchor(null);
+          }}
+          onClose={() => setFileCommentAnchor(null)}
         />
       )}
     </div>
