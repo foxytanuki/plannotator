@@ -258,8 +258,10 @@ export async function saveToObsidian(config: ObsidianConfig): Promise<Integratio
     const folderName = folder.trim() || "plannotator";
     const targetFolder = join(normalizedVault, folderName);
 
-    // Create folder if it doesn't exist
-    mkdirSync(targetFolder, { recursive: true });
+    // Create folder if it doesn't exist (guard for Bun mkdirSync regression)
+    if (!existsSync(targetFolder)) {
+      mkdirSync(targetFolder, { recursive: true });
+    }
 
     // Generate filename and full path
     const filename = generateFilename(plan, config.filenameFormat, config.filenameSeparator);
