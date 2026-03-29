@@ -30,6 +30,8 @@ import { getUIPreferences, type UIPreferences, type PlanWidth } from '@plannotat
 import { getEditorMode, saveEditorMode } from '@plannotator/ui/utils/editorMode';
 import { getInputMethod, saveInputMethod } from '@plannotator/ui/utils/inputMethod';
 import { useInputMethodSwitch } from '@plannotator/ui/hooks/useInputMethodSwitch';
+import { usePrintMode } from '@plannotator/ui/hooks/usePrintMode';
+import { modKey } from '@plannotator/ui/utils/platform';
 import { useResizablePanel } from '@plannotator/ui/hooks/useResizablePanel';
 import { ResizeHandle } from '@plannotator/ui/components/ResizeHandle';
 import { MobileMenu } from '@plannotator/ui/components/MobileMenu';
@@ -123,6 +125,8 @@ const App: React.FC = () => {
 
   const viewerRef = useRef<ViewerHandle>(null);
   const containerRef = useRef<HTMLElement>(null);
+
+  usePrintMode();
 
   // Resizable panels
   const panelResize = useResizablePanel({ storageKey: 'plannotator-panel-width' });
@@ -995,6 +999,30 @@ const App: React.FC = () => {
     submitted, isApiMode, markdown, annotationsOutput,
   ]);
 
+  // Cmd/Ctrl+P keyboard shortcut — print plan
+  useEffect(() => {
+    const handlePrintShortcut = (e: KeyboardEvent) => {
+      if (e.key !== 'p' || !(e.metaKey || e.ctrlKey)) return;
+
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+      if (showExport || showFeedbackPrompt || showClaudeCodeWarning ||
+          showAgentWarning || showPermissionModeSetup || pendingPasteImage) return;
+
+      if (submitted) return;
+
+      e.preventDefault();
+      window.print();
+    };
+
+    window.addEventListener('keydown', handlePrintShortcut);
+    return () => window.removeEventListener('keydown', handlePrintShortcut);
+  }, [
+    showExport, showFeedbackPrompt, showClaudeCodeWarning, showAgentWarning,
+    showPermissionModeSetup, pendingPasteImage, submitted,
+  ]);
+
   // Close export dropdown on click outside
   useEffect(() => {
     if (!showExportDropdown) return;
@@ -1018,7 +1046,7 @@ const App: React.FC = () => {
 
   return (
     <ThemeProvider defaultTheme="dark">
-      <div className="h-screen flex flex-col bg-background overflow-hidden">
+      <div data-print-region="root" className="h-screen flex flex-col bg-background overflow-hidden">
         {/* Minimal Header */}
         <header className="h-12 flex items-center justify-between px-2 md:px-4 border-b border-border/50 bg-card/50 backdrop-blur-xl sticky top-0 z-[50]">
           <div className="flex items-center gap-2 md:gap-3">
@@ -1213,6 +1241,17 @@ const App: React.FC = () => {
                       </svg>
                       Download Annotations
                     </button>
+                    <button
+                      onClick={() => { setShowExportDropdown(false); window.print(); }}
+                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors flex items-center gap-2"
+                    >
+                      <svg className="w-3.5 h-3.5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                      </svg>
+                      Print Plan
+                      <span className="ml-auto text-[10px] text-muted-foreground/60">{modKey}+P</span>
+                    </button>
+                    <div className="my-1 border-t border-border" />
                     {isApiMode && isObsidianConfigured() && (
                       <button
                         onClick={() => handleQuickSaveToNotes('obsidian')}
@@ -1292,6 +1331,7 @@ const App: React.FC = () => {
                 setTimeout(() => setNoteSaveToast(null), 3000);
               }}
               onOpenImport={() => setShowImport(true)}
+              onPrint={() => window.print()}
               sharingEnabled={sharingEnabled}
             />
           </div>
@@ -1311,7 +1351,7 @@ const App: React.FC = () => {
         )}
 
         {/* Main Content */}
-        <div className={`flex-1 flex overflow-hidden relative z-0 ${isResizing ? 'select-none' : ''}`}>
+        <div data-print-region="content" className={`flex-1 flex overflow-hidden relative z-0 ${isResizing ? 'select-none' : ''}`}>
           {/* Tater sprites — inside content wrapper so z-0 stacking context applies */}
           {taterMode && <TaterSpriteRunning />}
           {/* Left Sidebar: collapsed tab flags (when sidebar is closed) */}
@@ -1374,7 +1414,7 @@ const App: React.FC = () => {
           )}
 
           {/* Document Area */}
-          <main ref={containerRef} className="flex-1 min-w-0 overflow-y-auto bg-grid">
+          <main data-print-region="document" ref={containerRef} className="flex-1 min-w-0 overflow-y-auto bg-grid">
             <ConfirmDialog
               isOpen={!!draftBanner}
               onClose={dismissDraft}
@@ -1388,7 +1428,7 @@ const App: React.FC = () => {
             <div className="min-h-full flex flex-col items-center px-2 py-3 md:px-10 md:py-8 xl:px-16 relative z-10">
               {/* Annotation Toolstrip (hidden during plan diff and archive mode) */}
               {!isPlanDiffActive && !archive.archiveMode && (
-                <div className="w-full mb-3 md:mb-4 flex items-center justify-start" style={{ maxWidth: planMaxWidth }}>
+                <div data-print-hide className="w-full mb-3 md:mb-4 flex items-center justify-start" style={{ maxWidth: planMaxWidth }}>
                   <AnnotationToolstrip
                     inputMethod={inputMethod}
                     onInputMethodChange={handleInputMethodChange}
