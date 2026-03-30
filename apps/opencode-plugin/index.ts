@@ -53,20 +53,42 @@ let _planHtml: string | null = null;
 let _reviewHtml: string | null = null;
 
 async function logRemoteShareLink(
-  client: { app: { log: (entry: { level: "info"; message: string }) => void | Promise<void> } },
+  client: {
+    app: { log: (entry: { level: "info"; message: string }) => void | Promise<void> };
+    tui?: { showToast?: (args: { body: { message: string; variant: "info" | "error" | "success" | "warning" } }) => void | Promise<void> };
+  },
   content: string,
   shareBaseUrl: string | undefined,
   verb: string,
   noun: string,
 ): Promise<void> {
   const data = await getRemoteShareLinkData(content, shareBaseUrl);
-  await client.app.log({
-    level: "info",
-    message:
-      `Open this link on your local machine to ${verb}:\n` +
-      `${data.shareUrl}\n\n` +
-      `(${data.size} — ${noun}, annotations added in browser)`,
-  });
+  const message =
+    `Open this link on your local machine to ${verb}:\n` +
+    `${data.shareUrl}\n\n` +
+    `(${data.size} — ${noun}, annotations added in browser)`;
+
+  await client.app.log({ level: "info", message });
+}
+
+async function logRemotePortInfo(
+  client: {
+    app: { log: (entry: { level: "info"; message: string }) => void | Promise<void> };
+    tui?: { showToast?: (args: { body: { message: string; variant: "info" | "error" | "success" | "warning" } }) => void | Promise<void> };
+  },
+  port: number,
+): Promise<void> {
+  const configuredPort = process.env.PLANNOTATOR_PORT;
+  const message = configuredPort
+    ? `Plannotator listening on http://localhost:${port} (PLANNOTATOR_PORT=${configuredPort})`
+    : `Plannotator listening on http://localhost:${port}`;
+
+  if (client.tui?.showToast) {
+    await client.tui.showToast({ body: { message, variant: "info" } });
+    return;
+  }
+
+  await client.app.log({ level: "info", message });
 }
 
 function getPlanHtml(): string {
@@ -434,6 +456,7 @@ Do NOT proceed with implementation until your plan is approved.`);
             opencodeClient: ctx.client,
             onReady: async (url, isRemote, port) => {
               handleServerReady(url, isRemote, port);
+              await logRemotePortInfo(ctx.client, port).catch(() => {});
               if (isRemote && sharingEnabled) {
                 await logRemoteShareLink(ctx.client, planContent, getShareBaseUrl(), "review the plan", "plan only").catch(() => {});
               }
