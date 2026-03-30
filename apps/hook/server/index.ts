@@ -59,7 +59,7 @@ import {
 } from "@plannotator/server/annotate";
 import { getGitContext, runGitDiff } from "@plannotator/server/git";
 import { parsePRUrl, checkPRAuth, fetchPR, getCliName, getCliInstallUrl, getMRLabel, getMRNumberLabel, getDisplayRepo } from "@plannotator/server/pr";
-import { writeRemoteShareLink } from "@plannotator/server/share-url";
+import { getRemoteShareLinkData } from "@plannotator/server/share-url";
 import { resolveMarkdownFile, hasMarkdownFiles } from "@plannotator/shared/resolve-file";
 import { FILE_BROWSER_EXCLUDED } from "@plannotator/shared/reference-common";
 import { statSync } from "fs";
@@ -81,6 +81,20 @@ const planHtmlContent = planHtml as unknown as string;
 // @ts-ignore - Bun import attribute for text
 import reviewHtml from "../dist/review.html" with { type: "text" };
 const reviewHtmlContent = reviewHtml as unknown as string;
+
+async function writeRemoteShareNotice(
+  content: string,
+  shareBaseUrl: string | undefined,
+  verb: string,
+  noun: string,
+): Promise<void> {
+  const data = await getRemoteShareLinkData(content, shareBaseUrl);
+  process.stderr.write(
+    `\n  Open this link on your local machine to ${verb}:\n` +
+    `  ${data.shareUrl}\n\n` +
+    `  (${data.size} — ${noun}, annotations added in browser)\n\n`
+  );
+}
 
 // Check for subcommand
 const args = process.argv.slice(2);
@@ -234,7 +248,7 @@ if (args[0] === "sessions") {
       handleReviewServerReady(url, isRemote, port);
 
       if (isRemote && sharingEnabled && rawPatch) {
-        await writeRemoteShareLink(rawPatch, shareBaseUrl, "review changes", "diff only").catch(() => {});
+        await writeRemoteShareNotice(rawPatch, shareBaseUrl, "review changes", "diff only").catch(() => {});
       }
     },
   });
@@ -356,7 +370,7 @@ if (args[0] === "sessions") {
       handleAnnotateServerReady(url, isRemote, port);
 
       if (isRemote && sharingEnabled && markdown) {
-        await writeRemoteShareLink(markdown, shareBaseUrl, "annotate", "document only").catch(() => {});
+        await writeRemoteShareNotice(markdown, shareBaseUrl, "annotate", "document only").catch(() => {});
       }
     },
   });
@@ -474,7 +488,7 @@ if (args[0] === "sessions") {
       handleAnnotateServerReady(url, isRemote, port);
 
       if (isRemote && sharingEnabled) {
-        await writeRemoteShareLink(lastMessage.text, shareBaseUrl, "annotate", "message only").catch(() => {});
+        await writeRemoteShareNotice(lastMessage.text, shareBaseUrl, "annotate", "message only").catch(() => {});
       }
     },
   });
@@ -578,7 +592,7 @@ if (args[0] === "sessions") {
       handleServerReady(url, isRemote, port);
 
       if (isRemote && sharingEnabled) {
-        await writeRemoteShareLink(planContent, shareBaseUrl, "review the plan", "plan only").catch(() => {});
+        await writeRemoteShareNotice(planContent, shareBaseUrl, "review the plan", "plan only").catch(() => {});
       }
     },
   });
@@ -661,7 +675,7 @@ if (args[0] === "sessions") {
       handleAnnotateServerReady(url, isRemote, port);
 
       if (isRemote && sharingEnabled) {
-        await writeRemoteShareLink(msg.text, shareBaseUrl, "annotate", "message only").catch(() => {});
+        await writeRemoteShareNotice(msg.text, shareBaseUrl, "annotate", "message only").catch(() => {});
       }
     },
   });
@@ -722,7 +736,7 @@ if (args[0] === "sessions") {
       handleServerReady(url, isRemote, port);
 
       if (isRemote && sharingEnabled) {
-        await writeRemoteShareLink(planContent, shareBaseUrl, "review the plan", "plan only").catch(() => {});
+        await writeRemoteShareNotice(planContent, shareBaseUrl, "review the plan", "plan only").catch(() => {});
       }
     },
   });

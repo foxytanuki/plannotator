@@ -24,6 +24,23 @@ export async function generateRemoteShareUrl(
   return `${base}/#${hash}`;
 }
 
+export interface RemoteShareLinkData {
+  shareUrl: string;
+  size: string;
+}
+
+export async function getRemoteShareLinkData(
+  content: string,
+  shareBaseUrl: string | undefined,
+): Promise<RemoteShareLinkData> {
+  const shareUrl = await generateRemoteShareUrl(content, shareBaseUrl);
+  const size = formatSize(new TextEncoder().encode(shareUrl).length);
+  return {
+    shareUrl,
+    size,
+  };
+}
+
 /**
  * Format byte size as human-readable string
  */
@@ -43,11 +60,10 @@ export async function writeRemoteShareLink(
   verb: string,
   noun: string
 ): Promise<void> {
-  const shareUrl = await generateRemoteShareUrl(content, shareBaseUrl);
-  const size = formatSize(new TextEncoder().encode(shareUrl).length);
+  const data = await getRemoteShareLinkData(content, shareBaseUrl);
   process.stderr.write(
     `\n  Open this link on your local machine to ${verb}:\n` +
-    `  ${shareUrl}\n\n` +
-    `  (${size} — ${noun}, annotations added in browser)\n\n`
+    `  ${data.shareUrl}\n\n` +
+    `  (${data.size} — ${noun}, annotations added in browser)\n\n`
   );
 }

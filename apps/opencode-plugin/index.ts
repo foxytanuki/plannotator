@@ -32,7 +32,7 @@ import {
   startAnnotateServer,
   handleAnnotateServerReady,
 } from "@plannotator/server/annotate";
-import { writeRemoteShareLink } from "@plannotator/server/share-url";
+import { getRemoteShareLinkData } from "@plannotator/server/share-url";
 import {
   handleReviewCommand,
   handleAnnotateCommand,
@@ -51,6 +51,23 @@ import {
 // adds ~160ms to module parse time (see GitHub issue #410).
 let _planHtml: string | null = null;
 let _reviewHtml: string | null = null;
+
+async function logRemoteShareLink(
+  client: { app: { log: (entry: { level: "info"; message: string }) => void | Promise<void> } },
+  content: string,
+  shareBaseUrl: string | undefined,
+  verb: string,
+  noun: string,
+): Promise<void> {
+  const data = await getRemoteShareLinkData(content, shareBaseUrl);
+  await client.app.log({
+    level: "info",
+    message:
+      `Open this link on your local machine to ${verb}:\n` +
+      `${data.shareUrl}\n\n` +
+      `(${data.size} — ${noun}, annotations added in browser)`,
+  });
+}
 
 function getPlanHtml(): string {
   if (!_planHtml) _planHtml = readFileSync(path.join(import.meta.dir, "..", "plannotator.html"), "utf-8");
@@ -418,7 +435,7 @@ Do NOT proceed with implementation until your plan is approved.`);
             onReady: async (url, isRemote, port) => {
               handleServerReady(url, isRemote, port);
               if (isRemote && sharingEnabled) {
-                await writeRemoteShareLink(planContent, getShareBaseUrl(), "review the plan", "plan only").catch(() => {});
+                await logRemoteShareLink(ctx.client, planContent, getShareBaseUrl(), "review the plan", "plan only").catch(() => {});
               }
             },
           });
