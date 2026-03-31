@@ -34,7 +34,11 @@ class FakeServer {
 		const attempts = (this.attemptsByPort.get(port) ?? 0) + 1;
 		this.attemptsByPort.set(port, attempts);
 		if (port === this.failOnPort && attempts <= this.failCount) {
-			throw new Error("EADDRINUSE: address already in use");
+			const err = new Error("Failed to start server. Is port 19432 in use?") as Error & {
+				code?: string;
+			};
+			err.code = "EADDRINUSE";
+			throw err;
 		}
 		this.currentPort = port;
 		callback();

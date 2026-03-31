@@ -5,7 +5,13 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { isRemoteSession, getServerPort, getServerPortStrategy, formatPortConflictMessage } from "./remote";
+import {
+  isRemoteSession,
+  getServerPort,
+  getServerPortStrategy,
+  formatPortConflictMessage,
+  isPortInUseError,
+} from "./remote";
 
 // Save and restore env between tests
 const savedEnv: Record<string, string | undefined> = {};
@@ -139,5 +145,41 @@ describe("getServerPortStrategy", () => {
     process.env.PLANNOTATOR_REMOTE = "1";
     const strategy = getServerPortStrategy();
     expect(formatPortConflictMessage(strategy)).toContain("19432-19439");
+  });
+});
+
+describe("isPortInUseError", () => {
+  test("matches Bun-style EADDRINUSE errors via code", () => {
+    expect(
+      isPortInUseError({
+        code: "EADDRINUSE",
+        message: "Failed to start server. Is port 19432 in use?",
+      })
+    ).toBe(true);
+  });
+
+  test("matches message-only EADDRINUSE errors", () => {
+    expect(
+      isPortInUseError({
+        message: "EADDRINUSE: address already in use",
+      })
+    ).toBe(true);
+  });
+
+  test("matches plain address already in use messages", () => {
+    expect(
+      isPortInUseError({
+        message: "listen failed: address already in use",
+      })
+    ).toBe(true);
+  });
+
+  test("ignores unrelated errors", () => {
+    expect(
+      isPortInUseError({
+        code: "EPERM",
+        message: "permission denied",
+      })
+    ).toBe(false);
   });
 });

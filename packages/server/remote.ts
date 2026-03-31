@@ -110,3 +110,21 @@ export function formatPortConflictMessage(
 
   return "Failed to bind an available local port";
 }
+
+export function isPortInUseError(err: unknown): boolean {
+  if (!err || typeof err !== "object") {
+    return false;
+  }
+
+  const errorWithCode = err as { code?: unknown; message?: unknown };
+  const message =
+    typeof errorWithCode.message === "string"
+      ? errorWithCode.message.toLowerCase()
+      : "";
+
+  return (
+    errorWithCode.code === "EADDRINUSE" ||
+    message.includes("eaddrinuse") ||
+    message.includes("address already in use")
+  );
+}

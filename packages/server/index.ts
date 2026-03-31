@@ -15,6 +15,7 @@ import {
   isRemoteSession,
   getServerPortStrategy,
   formatPortConflictMessage,
+  isPortInUseError,
 } from "./remote";
 import { openEditorDiff } from "./ide";
 import {
@@ -542,8 +543,7 @@ export async function startPlannotatorServer(
 
       break; // Success, exit retry loop
     } catch (err: unknown) {
-      const isAddressInUse =
-        err instanceof Error && err.message.includes("EADDRINUSE");
+      const isAddressInUse = isPortInUseError(err);
 
       if (isAddressInUse && attemptIndex < portStrategy.attemptPorts.length - 1) {
         const nextPort = portStrategy.attemptPorts[attemptIndex + 1];

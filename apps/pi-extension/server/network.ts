@@ -87,6 +87,24 @@ function formatPortConflictMessage(strategy: PortStrategy): string {
 	return "Failed to bind an available local port";
 }
 
+function isPortInUseError(err: unknown): boolean {
+	if (!err || typeof err !== "object") {
+		return false;
+	}
+
+	const errorWithCode = err as { code?: unknown; message?: unknown };
+	const message =
+		typeof errorWithCode.message === "string"
+			? errorWithCode.message.toLowerCase()
+			: "";
+
+	return (
+		errorWithCode.code === "EADDRINUSE" ||
+		message.includes("eaddrinuse") ||
+		message.includes("address already in use")
+	);
+}
+
 export async function listenOnPort(
 	server: Server,
 ): Promise<{ port: number; portSource: PortSource }> {
@@ -110,8 +128,7 @@ export async function listenOnPort(
 			const addr = server.address() as { port: number };
 			return { port: addr.port, portSource: strategy.portSource };
 		} catch (err: unknown) {
-			const isAddressInUse =
-				err instanceof Error && err.message.includes("EADDRINUSE");
+			const isAddressInUse = isPortInUseError(err);
 			if (isAddressInUse && attemptIndex < strategy.attemptPorts.length - 1) {
 				const nextPort = strategy.attemptPorts[attemptIndex + 1];
 				if (nextPort === attemptPort) {

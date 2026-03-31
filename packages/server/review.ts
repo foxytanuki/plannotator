@@ -13,6 +13,7 @@ import {
   isRemoteSession,
   getServerPortStrategy,
   formatPortConflictMessage,
+  isPortInUseError,
 } from "./remote";
 import type { Origin } from "@plannotator/shared/agents";
 import { type DiffType, type GitContext, runGitDiff, getFileContentsForDiff, gitAddFile, gitResetFile, parseWorktreeDiffType, validateFilePath } from "./git";
@@ -553,8 +554,7 @@ export async function startReviewServer(
 
       break; // Success, exit retry loop
     } catch (err: unknown) {
-      const isAddressInUse =
-        err instanceof Error && err.message.includes("EADDRINUSE");
+      const isAddressInUse = isPortInUseError(err);
 
       if (isAddressInUse && attemptIndex < portStrategy.attemptPorts.length - 1) {
         const nextPort = portStrategy.attemptPorts[attemptIndex + 1];
