@@ -6,7 +6,7 @@ sidebar:
 section: "Guides"
 ---
 
-Plannotator works in remote environments — SSH sessions, VS Code Remote, devcontainers, and Docker. The key difference is that the browser can't auto-open on a headless server, so you need a fixed port and manual URL access.
+Plannotator works in remote environments — SSH sessions, VS Code Remote, devcontainers, and Docker. By default, remote sessions skip the system browser auto-open, so you usually need a fixed port and manual URL access.
 
 ## Remote mode
 
@@ -20,7 +20,7 @@ export PLANNOTATOR_PORT=9999  # Choose a port you'll forward
 Remote mode changes two behaviors:
 
 1. **Fixed port** — Uses `PLANNOTATOR_PORT` (default: `19432`) instead of a random port, so you can set up port forwarding once
-2. **No browser auto-open** — Prints the URL to the terminal instead of trying to open a browser
+2. **No default browser auto-open** — Prints the URL to the terminal instead of trying the system browser directly
 
 ### Legacy detection
 
@@ -28,7 +28,7 @@ Plannotator also detects `SSH_TTY` and `SSH_CONNECTION` environment variables fo
 
 ## VS Code Remote / devcontainers
 
-VS Code sets the `BROWSER` environment variable in devcontainers to a helper script that opens URLs on your local machine. Plannotator respects this — in most cases, the browser opens automatically with no extra configuration.
+VS Code sets the `BROWSER` environment variable in devcontainers to a helper script that opens URLs on your local machine. Plannotator respects this override, so in most cases the browser still opens automatically with no extra configuration.
 
 If the automatic `BROWSER` detection doesn't work for your setup, you can fall back to manual remote mode:
 

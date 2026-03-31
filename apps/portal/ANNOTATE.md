@@ -175,6 +175,6 @@ The annotate server respects the same environment variables as plan review:
 
 | Variable | Description |
 |----------|-------------|
-| `PLANNOTATOR_REMOTE` | Set to `1` for remote/SSH mode (fixed port, no browser open) |
+| `PLANNOTATOR_REMOTE` | Set to `1` for remote/SSH mode (fixed port, skips the default browser open unless `PLANNOTATOR_BROWSER` or `BROWSER` is set) |
 | `PLANNOTATOR_PORT` | Fixed port (default: random locally, `19432` for remote) |
 | `PLANNOTATOR_BROWSER` | Custom browser to open the UI in |

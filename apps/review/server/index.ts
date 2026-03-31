@@ -20,6 +20,7 @@ import {
   startReviewServer,
   handleReviewServerReady,
 } from "@plannotator/server/review";
+import { shouldAutoOpenBrowser } from "@plannotator/server/browser";
 
 // Embed the built HTML at compile time
 // @ts-ignore - Bun import attribute for text
@@ -69,7 +70,7 @@ const server = await startReviewServer({
   onReady: (url, isRemote, port) => {
     handleReviewServerReady(url, isRemote, port);
     console.error(`Code review at ${url}`);
-    if (isRemote) {
+    if (isRemote && !shouldAutoOpenBrowser(isRemote)) {
       console.error(`(Remote mode - manually open the URL above)`);
     }
   },

@@ -12,7 +12,7 @@ All Plannotator environment variables and their defaults.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PLANNOTATOR_REMOTE` | auto-detect | Set to `1` or `true` to force remote mode. Uses fixed port and skips browser auto-open. |
+| `PLANNOTATOR_REMOTE` | auto-detect | Set to `1` or `true` to force remote mode. Uses a fixed port and skips the default browser auto-open unless `PLANNOTATOR_BROWSER` or `BROWSER` is set. |
 | `PLANNOTATOR_PORT` | random (local) / `19432` (remote) | Fixed server port. When not set, local sessions use a random port; remote sessions default to `19432`. |
 | `PLANNOTATOR_BROWSER` | system default | Custom browser to open the UI in. macOS: app name or path. Linux/Windows: executable path. Can also be a script. Takes priority over `BROWSER`. Also settable per-invocation with `--browser`. |
 | `BROWSER` | (none) | Standard env var for specifying a browser. VS Code sets this automatically in devcontainers. Used as fallback when `PLANNOTATOR_BROWSER` is not set. |
@@ -49,7 +49,7 @@ When running your own paste service binary, these variables configure it:
 When `PLANNOTATOR_REMOTE=1` or SSH is detected:
 
 - Server binds to `PLANNOTATOR_PORT` (default `19432`) instead of a random port
-- Browser auto-open is skipped
+- Default browser auto-open is skipped unless `PLANNOTATOR_BROWSER` or `BROWSER` is set
 - The URL is printed to stderr for manual access
 
 ### Legacy SSH detection

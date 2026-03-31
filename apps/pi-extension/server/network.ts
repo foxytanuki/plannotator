@@ -8,6 +8,7 @@ import type { Server } from "node:http";
 import { release } from "node:os";
 
 const DEFAULT_REMOTE_PORT = 19432;
+type BrowserEnv = Record<string, string | undefined>;
 
 /**
  * Check if running in a remote session (SSH, devcontainer, etc.)
@@ -48,6 +49,22 @@ function getServerPort(): {
 		return { port: DEFAULT_REMOTE_PORT, portSource: "remote-default" };
 	}
 	return { port: 0, portSource: "random" };
+}
+
+/** Return true when an explicit browser/script handler is configured. */
+export function hasBrowserOverride(env: BrowserEnv = process.env): boolean {
+	return Boolean(env.PLANNOTATOR_BROWSER || env.BROWSER);
+}
+
+/**
+ * Remote sessions skip the default system opener, but still honor explicit
+ * browser/script handlers such as PLANNOTATOR_BROWSER or VS Code's BROWSER helper.
+ */
+export function shouldAutoOpenBrowser(
+	isRemote: boolean,
+	env: BrowserEnv = process.env,
+): boolean {
+	return !isRemote || hasBrowserOverride(env);
 }
 
 const MAX_RETRIES = 5;
@@ -99,7 +116,8 @@ export async function listenOnPort(
 /**
  * Open URL in system browser (Node-compatible, no Bun $ dependency).
  * Honors PLANNOTATOR_BROWSER and BROWSER env vars, matching packages/server/browser.ts.
- * Returns { opened: true } if browser was opened, { opened: false, isRemote: true, url } if remote session.
+ * Returns { opened: true } if browser was opened, { opened: false, isRemote: true, url }
+ * when remote mode requires manual opening.
  */
 export function openBrowser(url: string): {
 	opened: boolean;
@@ -107,7 +125,7 @@ export function openBrowser(url: string): {
 	url?: string;
 } {
 	const browser = process.env.PLANNOTATOR_BROWSER || process.env.BROWSER;
-	if (isRemoteSession() && !browser) {
+	if (!shouldAutoOpenBrowser(isRemoteSession())) {
 		return { opened: false, isRemote: true, url };
 	}
 

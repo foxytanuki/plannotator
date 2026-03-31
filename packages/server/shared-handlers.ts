@@ -7,7 +7,7 @@
  */
 
 import { mkdirSync } from "fs";
-import { openBrowser } from "./browser";
+import { openBrowser, shouldAutoOpenBrowser } from "./browser";
 import { validateImagePath, validateUploadExtension, UPLOAD_DIR } from "./image";
 import { saveDraft, loadDraft, deleteDraft } from "./draft";
 import { FAVICON_SVG } from "@plannotator/shared/favicon";
@@ -135,11 +135,17 @@ export function handleFavicon(): Response {
   });
 }
 
-/** Open browser for local sessions or when a custom handler (e.g. VS Code extension) is configured. */
+/**
+ * Open the browser automatically for local sessions, or for remote sessions when
+ * an explicit browser/script handler is configured (for example VS Code's BROWSER helper).
+ */
 export async function handleServerReady(
   url: string,
   isRemote: boolean,
   _port: number,
 ): Promise<void> {
+  if (!shouldAutoOpenBrowser(isRemote)) {
+    return;
+  }
   await openBrowser(url);
 }

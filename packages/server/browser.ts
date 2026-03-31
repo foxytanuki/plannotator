@@ -8,6 +8,7 @@ import path from "node:path";
 import fs from "node:fs";
 
 const IPC_REGISTRY = path.join(os.homedir(), ".plannotator", "vscode-ipc.json");
+type BrowserEnv = Record<string, string | undefined>;
 
 /**
  * Try opening URL via VS Code extension IPC registry.
@@ -66,8 +67,24 @@ export async function isWSL(): Promise<boolean> {
   return false;
 }
 
+/** Return true when an explicit browser/script handler is configured. */
+export function hasBrowserOverride(env: BrowserEnv = process.env): boolean {
+  return Boolean(env.PLANNOTATOR_BROWSER || env.BROWSER);
+}
+
+/**
+ * Remote sessions skip the default system opener, but still honor explicit
+ * browser/script handlers such as PLANNOTATOR_BROWSER or VS Code's BROWSER helper.
+ */
+export function shouldAutoOpenBrowser(isRemote: boolean, env: BrowserEnv = process.env): boolean {
+  return !isRemote || hasBrowserOverride(env);
+}
+
 /**
  * Open a URL in the browser
+ *
+ * This is a low-level opener. Callers should enforce remote/session policy via
+ * shouldAutoOpenBrowser() or handleServerReady() before invoking it.
  *
  * Uses PLANNOTATOR_BROWSER env var if set, otherwise uses system default.
  * - macOS: Set to app name ("Google Chrome") or path ("/Applications/Firefox.app")
