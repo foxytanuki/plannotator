@@ -98,7 +98,7 @@ When `plannotator review` executes, the entry point in `apps/hook/server/index.t
 
 2. **Initial diff** — `runGitDiff("uncommitted")` runs `git diff HEAD` and captures the raw unified patch as a string.
 
-3. **Server** — `startReviewServer()` spins up a Bun HTTP server on a random port (or a fixed port in remote/SSH mode). It serves the review UI as a single embedded HTML file and exposes API endpoints: `/api/diff` to serve the patch, `/api/diff/switch` to change diff types on the fly, and `/api/feedback` to receive the review.
+3. **Server** — `startReviewServer()` spins up a Bun HTTP server on a random port locally, or a predictable remote range / exact configured port in remote mode. It serves the review UI as a single embedded HTML file and exposes API endpoints: `/api/diff` to serve the patch, `/api/diff/switch` to change diff types on the fly, and `/api/feedback` to receive the review.
 
 4. **Blocking wait** — The process calls `server.waitForDecision()`, which returns a promise that only resolves when the user submits feedback or approves. The process blocks here — no polling, no timeout (well, 96 hours). When it resolves, the server shuts down and the feedback string prints to stdout.
 

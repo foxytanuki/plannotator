@@ -38,7 +38,7 @@ startAnnotateServer({ markdown, filePath, ... })
 
 ### 2. Server starts
 
-`packages/server/annotate.ts` starts a Bun HTTP server on a random port (or a fixed port in remote mode). It serves:
+`packages/server/annotate.ts` starts a Bun HTTP server on a random port (or the default remote range / an exact configured port in remote mode). It serves:
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -175,6 +175,6 @@ The annotate server respects the same environment variables as plan review:
 
 | Variable | Description |
 |----------|-------------|
-| `PLANNOTATOR_REMOTE` | Set to `1` for remote/SSH mode (fixed port, no browser open) |
-| `PLANNOTATOR_PORT` | Fixed port (default: random locally, `19432` for remote) |
+| `PLANNOTATOR_REMOTE` | Set to `1` for remote/SSH mode (prints the URL, skips browser open, and falls back across `19432-19439` by default) |
+| `PLANNOTATOR_PORT` | Exact port (default: random locally, `19432-19439` fallback remotely) |
 | `PLANNOTATOR_BROWSER` | Custom browser to open the UI in |

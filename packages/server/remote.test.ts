@@ -5,7 +5,13 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { isRemoteSession, getServerPort } from "./remote";
+import {
+  isRemoteSession,
+  getServerPort,
+  getServerPortStrategy,
+  formatPortConflictMessage,
+  isPortInUseError,
+} from "./remote";
 
 // Save and restore env between tests
 const savedEnv: Record<string, string | undefined> = {};
@@ -100,5 +106,80 @@ describe("getServerPort", () => {
     clearEnv();
     process.env.PLANNOTATOR_PORT = "0";
     expect(getServerPort()).toBe(0);
+  });
+});
+
+describe("getServerPortStrategy", () => {
+  test("local sessions use random port 0", () => {
+    clearEnv();
+    expect(getServerPortStrategy()).toEqual({
+      port: 0,
+      portSource: "random",
+      attemptPorts: [0],
+    });
+  });
+
+  test("remote default tries predictable range 19432..19439", () => {
+    clearEnv();
+    process.env.PLANNOTATOR_REMOTE = "1";
+    expect(getServerPortStrategy()).toEqual({
+      port: 19432,
+      portSource: "remote-default",
+      attemptPorts: [19432, 19433, 19434, 19435, 19436, 19437, 19438, 19439],
+    });
+  });
+
+  test("explicit PLANNOTATOR_PORT retries the exact port only", () => {
+    clearEnv();
+    process.env.PLANNOTATOR_REMOTE = "1";
+    process.env.PLANNOTATOR_PORT = "3000";
+    expect(getServerPortStrategy()).toEqual({
+      port: 3000,
+      portSource: "env",
+      attemptPorts: [3000, 3000, 3000, 3000, 3000],
+    });
+  });
+
+  test("remote conflict message mentions the fallback range", () => {
+    clearEnv();
+    process.env.PLANNOTATOR_REMOTE = "1";
+    const strategy = getServerPortStrategy();
+    expect(formatPortConflictMessage(strategy)).toContain("19432-19439");
+  });
+});
+
+describe("isPortInUseError", () => {
+  test("matches Bun-style EADDRINUSE errors via code", () => {
+    expect(
+      isPortInUseError({
+        code: "EADDRINUSE",
+        message: "Failed to start server. Is port 19432 in use?",
+      })
+    ).toBe(true);
+  });
+
+  test("matches message-only EADDRINUSE errors", () => {
+    expect(
+      isPortInUseError({
+        message: "EADDRINUSE: address already in use",
+      })
+    ).toBe(true);
+  });
+
+  test("matches plain address already in use messages", () => {
+    expect(
+      isPortInUseError({
+        message: "listen failed: address already in use",
+      })
+    ).toBe(true);
+  });
+
+  test("ignores unrelated errors", () => {
+    expect(
+      isPortInUseError({
+        code: "EPERM",
+        message: "permission denied",
+      })
+    ).toBe(false);
   });
 });

@@ -1,6 +1,5 @@
 /**
  * Network utilities — remote detection, port binding, browser opening.
- * isRemoteSession, getServerPort, listenOnPort, openBrowser
  */
 
 import { spawn } from "node:child_process";
@@ -8,62 +7,117 @@ import type { Server } from "node:http";
 import { release } from "node:os";
 
 const DEFAULT_REMOTE_PORT = 19432;
+const DEFAULT_REMOTE_PORT_RANGE_END = 19439;
+const EXACT_PORT_RETRY_COUNT = 5;
 
-/**
- * Check if running in a remote session (SSH, devcontainer, etc.)
- * Honors PLANNOTATOR_REMOTE env var, or detects SSH_TTY/SSH_CONNECTION.
- */
+type PortSource = "env" | "remote-default" | "random";
+
+interface PortStrategy {
+	port: number;
+	portSource: PortSource;
+	attemptPorts: number[];
+}
+
+function parseConfiguredPort(): number | null {
+	const envPort = process.env.PLANNOTATOR_PORT;
+	if (!envPort) {
+		return null;
+	}
+
+	const parsed = parseInt(envPort, 10);
+	if (!Number.isNaN(parsed) && parsed > 0 && parsed < 65536) {
+		return parsed;
+	}
+
+	return null;
+}
+
+/** Check if running in a remote session (SSH, devcontainer, etc.). */
 function isRemoteSession(): boolean {
 	const remote = process.env.PLANNOTATOR_REMOTE;
 	if (remote === "1" || remote?.toLowerCase() === "true") {
 		return true;
 	}
-	// Legacy SSH detection
 	if (process.env.SSH_TTY || process.env.SSH_CONNECTION) {
 		return true;
 	}
 	return false;
 }
 
-/**
- * Get the server port to use.
- * - PLANNOTATOR_PORT env var takes precedence
- * - Remote sessions default to 19432 (for port forwarding)
- * - Local sessions use random port
- * Returns { port, portSource } so caller can notify user if needed.
- */
-function getServerPort(): {
-	port: number;
-	portSource: "env" | "remote-default" | "random";
-} {
-	const envPort = process.env.PLANNOTATOR_PORT;
-	if (envPort) {
-		const parsed = parseInt(envPort, 10);
-		if (!Number.isNaN(parsed) && parsed > 0 && parsed < 65536) {
-			return { port: parsed, portSource: "env" };
-		}
-		// Invalid port - fall back silently, caller can check env var themselves
+/** Get the server port strategy to use. */
+function getServerPortStrategy(): PortStrategy {
+	const configuredPort = parseConfiguredPort();
+	if (configuredPort !== null) {
+		return {
+			port: configuredPort,
+			portSource: "env",
+			attemptPorts: Array(EXACT_PORT_RETRY_COUNT).fill(configuredPort),
+		};
 	}
+
 	if (isRemoteSession()) {
-		return { port: DEFAULT_REMOTE_PORT, portSource: "remote-default" };
+		return {
+			port: DEFAULT_REMOTE_PORT,
+			portSource: "remote-default",
+			attemptPorts: Array.from(
+				{ length: DEFAULT_REMOTE_PORT_RANGE_END - DEFAULT_REMOTE_PORT + 1 },
+				(_, index) => DEFAULT_REMOTE_PORT + index,
+			),
+		};
 	}
-	return { port: 0, portSource: "random" };
+
+	return { port: 0, portSource: "random", attemptPorts: [0] };
 }
 
-const MAX_RETRIES = 5;
 const RETRY_DELAY_MS = 500;
+
+function formatPortConflictMessage(strategy: PortStrategy): string {
+	if (strategy.portSource === "remote-default") {
+		const startPort = strategy.attemptPorts[0] ?? DEFAULT_REMOTE_PORT;
+		const endPort =
+			strategy.attemptPorts[strategy.attemptPorts.length - 1] ??
+			DEFAULT_REMOTE_PORT_RANGE_END;
+		return `Ports ${startPort}-${endPort} are all in use in remote mode (set PLANNOTATOR_PORT to use an exact port)`;
+	}
+
+	if (strategy.portSource === "env") {
+		return `Port ${strategy.port} in use after ${strategy.attemptPorts.length} retries`;
+	}
+
+	return "Failed to bind an available local port";
+}
+
+function isPortInUseError(err: unknown): boolean {
+	if (!err || typeof err !== "object") {
+		return false;
+	}
+
+	const errorWithCode = err as { code?: unknown; message?: unknown };
+	const message =
+		typeof errorWithCode.message === "string"
+			? errorWithCode.message.toLowerCase()
+			: "";
+
+	return (
+		errorWithCode.code === "EADDRINUSE" ||
+		message.includes("eaddrinuse") ||
+		message.includes("address already in use")
+	);
+}
 
 export async function listenOnPort(
 	server: Server,
-): Promise<{ port: number; portSource: "env" | "remote-default" | "random" }> {
-	const result = getServerPort();
+): Promise<{ port: number; portSource: PortSource }> {
+	const strategy = getServerPortStrategy();
 
-	for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+	for (let attemptIndex = 0; attemptIndex < strategy.attemptPorts.length; attemptIndex++) {
+		const attemptPort = strategy.attemptPorts[attemptIndex]!;
+
 		try {
 			await new Promise<void>((resolve, reject) => {
 				server.once("error", reject);
 				server.listen(
-					result.port,
+					attemptPort,
 					isRemoteSession() ? "0.0.0.0" : "127.0.0.1",
 					() => {
 						server.removeListener("error", reject);
@@ -72,35 +126,27 @@ export async function listenOnPort(
 				);
 			});
 			const addr = server.address() as { port: number };
-			return { port: addr.port, portSource: result.portSource };
+			return { port: addr.port, portSource: strategy.portSource };
 		} catch (err: unknown) {
-			const isAddressInUse =
-				err instanceof Error && err.message.includes("EADDRINUSE");
-			if (isAddressInUse && attempt < MAX_RETRIES) {
-				await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+			const isAddressInUse = isPortInUseError(err);
+			if (isAddressInUse && attemptIndex < strategy.attemptPorts.length - 1) {
+				const nextPort = strategy.attemptPorts[attemptIndex + 1];
+				if (nextPort === attemptPort) {
+					await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+				}
 				continue;
 			}
 			if (isAddressInUse) {
-				const hint = isRemoteSession()
-					? " (set PLANNOTATOR_PORT to use a different port)"
-					: "";
-				throw new Error(
-					`Port ${result.port} in use after ${MAX_RETRIES} retries${hint}`,
-				);
+				throw new Error(formatPortConflictMessage(strategy));
 			}
 			throw err;
 		}
 	}
 
-	// Unreachable, but satisfies TypeScript
 	throw new Error("Failed to bind port");
 }
 
-/**
- * Open URL in system browser (Node-compatible, no Bun $ dependency).
- * Honors PLANNOTATOR_BROWSER and BROWSER env vars, matching packages/server/browser.ts.
- * Returns { opened: true } if browser was opened, { opened: false, isRemote: true, url } if remote session.
- */
+/** Open URL in system browser. */
 export function openBrowser(url: string): {
 	opened: boolean;
 	isRemote?: boolean;

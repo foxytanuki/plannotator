@@ -6,10 +6,15 @@
  *
  * Environment variables:
  *   PLANNOTATOR_REMOTE - Set to "1" or "true" for remote/devcontainer mode
- *   PLANNOTATOR_PORT   - Fixed port to use (default: random locally, 19432 for remote)
+ *   PLANNOTATOR_PORT   - Exact port to use (default: random locally, 19432-19439 fallback remotely)
  */
 
-import { isRemoteSession, getServerPort } from "./remote";
+import {
+  isRemoteSession,
+  getServerPortStrategy,
+  formatPortConflictMessage,
+  isPortInUseError,
+} from "./remote";
 import type { Origin } from "@plannotator/shared/agents";
 import { type DiffType, type GitContext, runGitDiff, getFileContentsForDiff, gitAddFile, gitResetFile, parseWorktreeDiffType, validateFilePath } from "./git";
 import { getRepoInfo } from "./repo";
@@ -78,7 +83,6 @@ export interface ReviewServerResult {
 
 // --- Server Implementation ---
 
-const MAX_RETRIES = 5;
 const RETRY_DELAY_MS = 500;
 
 /**
@@ -193,7 +197,7 @@ export async function startReviewServer(
   }
 
   const isRemote = isRemoteSession();
-  const configuredPort = getServerPort();
+  const portStrategy = getServerPortStrategy();
   const wslFlag = await isWSL();
   const gitUser = detectGitUser();
 
@@ -239,10 +243,12 @@ export async function startReviewServer(
   // Start server with retry logic
   let server: ReturnType<typeof Bun.serve> | null = null;
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+  for (let attemptIndex = 0; attemptIndex < portStrategy.attemptPorts.length; attemptIndex++) {
+    const attemptPort = portStrategy.attemptPorts[attemptIndex]!;
+
     try {
       server = Bun.serve({
-        port: configuredPort,
+        port: attemptPort,
 
         async fetch(req, server) {
           const url = new URL(req.url);
@@ -548,17 +554,18 @@ export async function startReviewServer(
 
       break; // Success, exit retry loop
     } catch (err: unknown) {
-      const isAddressInUse =
-        err instanceof Error && err.message.includes("EADDRINUSE");
+      const isAddressInUse = isPortInUseError(err);
 
-      if (isAddressInUse && attempt < MAX_RETRIES) {
-        await Bun.sleep(RETRY_DELAY_MS);
+      if (isAddressInUse && attemptIndex < portStrategy.attemptPorts.length - 1) {
+        const nextPort = portStrategy.attemptPorts[attemptIndex + 1];
+        if (nextPort === attemptPort) {
+          await Bun.sleep(RETRY_DELAY_MS);
+        }
         continue;
       }
 
       if (isAddressInUse) {
-        const hint = isRemote ? " (set PLANNOTATOR_PORT to use different port)" : "";
-        throw new Error(`Port ${configuredPort} in use after ${MAX_RETRIES} retries${hint}`);
+        throw new Error(formatPortConflictMessage(portStrategy));
       }
 
       throw err;
