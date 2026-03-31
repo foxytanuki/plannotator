@@ -12,8 +12,8 @@ All Plannotator environment variables and their defaults.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PLANNOTATOR_REMOTE` | auto-detect | Set to `1` or `true` to force remote mode. Uses fixed port and skips browser auto-open. |
-| `PLANNOTATOR_PORT` | random (local) / `19432` (remote) | Fixed server port. When not set, local sessions use a random port; remote sessions default to `19432`. |
+| `PLANNOTATOR_REMOTE` | auto-detect | Set to `1` or `true` to force remote mode. Remote mode prints the URL, skips browser auto-open, and falls back across ports `19432-19439` by default. |
+| `PLANNOTATOR_PORT` | random (local) / `19432-19439` (remote) | Exact server port. When set, Plannotator retries that port repeatedly; otherwise local sessions use a random port and remote sessions try `19432-19439`. |
 | `PLANNOTATOR_BROWSER` | system default | Custom browser to open the UI in. macOS: app name or path. Linux/Windows: executable path. Can also be a script. Takes priority over `BROWSER`. Also settable per-invocation with `--browser`. |
 | `BROWSER` | (none) | Standard env var for specifying a browser. VS Code sets this automatically in devcontainers. Used as fallback when `PLANNOTATOR_BROWSER` is not set. |
 | `PLANNOTATOR_SHARE` | enabled | Set to `disabled` to turn off sharing. Hides share UI and import options. |
@@ -48,7 +48,7 @@ When running your own paste service binary, these variables configure it:
 
 When `PLANNOTATOR_REMOTE=1` or SSH is detected:
 
-- Server binds to `PLANNOTATOR_PORT` (default `19432`) instead of a random port
+- Server tries `PLANNOTATOR_PORT` exactly when set, otherwise falls back across `19432-19439`
 - Browser auto-open is skipped
 - The URL is printed to stderr for manual access
 
@@ -66,7 +66,7 @@ If either is present, Plannotator enables remote mode automatically. Prefer `PLA
 ## Port resolution order
 
 1. `PLANNOTATOR_PORT` environment variable (if valid integer 1-65535)
-2. `19432` if in remote mode
+2. `19432-19439` if in remote mode and no port is set
 3. `0` (random) if in local mode
 
 ## Custom browser examples

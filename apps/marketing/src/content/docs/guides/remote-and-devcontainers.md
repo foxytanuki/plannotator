@@ -6,7 +6,7 @@ sidebar:
 section: "Guides"
 ---
 
-Plannotator works in remote environments — SSH sessions, VS Code Remote, devcontainers, and Docker. The key difference is that the browser can't auto-open on a headless server, so you need a fixed port and manual URL access.
+Plannotator works in remote environments — SSH sessions, VS Code Remote, devcontainers, and Docker. The browser can't auto-open on a headless server, so remote mode prints the URL and uses a predictable port range for forwarding.
 
 ## Remote mode
 
@@ -14,13 +14,15 @@ Set `PLANNOTATOR_REMOTE=1` to enable remote mode:
 
 ```bash
 export PLANNOTATOR_REMOTE=1
-export PLANNOTATOR_PORT=9999  # Choose a port you'll forward
+export PLANNOTATOR_PORT=9999  # Optional: exact port if you want to pin forwarding
 ```
 
 Remote mode changes two behaviors:
 
-1. **Fixed port** — Uses `PLANNOTATOR_PORT` (default: `19432`) instead of a random port, so you can set up port forwarding once
+1. **Predictable port range** — Uses `19432-19439` by default instead of a random port, so you can set up port forwarding once
 2. **No browser auto-open** — Prints the URL to the terminal instead of trying to open a browser
+
+If you forward only one remote port, set `PLANNOTATOR_PORT` to that exact port. Plannotator then retries that port repeatedly instead of falling back across the remote range.
 
 ### Legacy detection
 
@@ -45,7 +47,7 @@ If the automatic `BROWSER` detection doesn't work for your setup, you can fall b
 ```
 
 2. When Plannotator opens, check the VS Code **Ports** tab — the port should be automatically forwarded
-3. Open `http://localhost:9999` in your local browser
+3. Open the printed URL in your local browser
 
 ## SSH port forwarding
 
@@ -61,6 +63,8 @@ Or forward ad-hoc when connecting:
 ```bash
 ssh -L 9999:localhost:9999 your-server
 ```
+
+If you're only forwarding one port like `9999`, set `PLANNOTATOR_PORT=9999` so Plannotator retries that exact port instead of the default `19432-19439` range.
 
 Then open `http://localhost:9999` locally when Plannotator prints the URL.
 

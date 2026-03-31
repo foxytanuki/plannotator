@@ -12,8 +12,8 @@ Plannotator is configured through environment variables and hook/plugin configur
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PLANNOTATOR_REMOTE` | auto-detect | Set to `1` or `true` to force remote mode. Uses a fixed port and skips browser auto-open. |
-| `PLANNOTATOR_PORT` | random (local) / `19432` (remote) | Fixed server port. Useful for port forwarding in remote environments. |
+| `PLANNOTATOR_REMOTE` | auto-detect | Set to `1` or `true` to force remote mode. Remote mode prints the URL, skips browser auto-open, and falls back across ports `19432-19439` by default. |
+| `PLANNOTATOR_PORT` | random (local) / `19432-19439` (remote) | Exact server port. Useful when you want to pin port forwarding in remote environments. |
 | `PLANNOTATOR_BROWSER` | system default | Custom browser or script to open the UI. |
 | `PLANNOTATOR_SHARE` | enabled | Set to `disabled` to turn off URL sharing entirely. |
 | `PLANNOTATOR_SHARE_URL` | `https://share.plannotator.ai` | Point share links at a self-hosted portal. |
@@ -65,7 +65,7 @@ Approved and denied plans are saved to `~/.plannotator/plans/` by default. You c
 
 ## Remote mode
 
-When working over SSH, in a devcontainer, or in Docker, set `PLANNOTATOR_REMOTE=1` and `PLANNOTATOR_PORT` to a port you'll forward. See the [remote & devcontainers guide](/docs/guides/remote-and-devcontainers/) for setup instructions.
+When working over SSH, in a devcontainer, or in Docker, set `PLANNOTATOR_REMOTE=1`. Add `PLANNOTATOR_PORT` if you want to pin an exact forwarded port. See the [remote & devcontainers guide](/docs/guides/remote-and-devcontainers/) for setup instructions.
 
 ## Custom browser
 
