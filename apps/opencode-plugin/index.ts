@@ -95,7 +95,7 @@ function resolvePlanContent(plan: string): { content: string; filePath?: string 
 
 function formatServerReadyMessage(url: string, isRemote: boolean): string {
   if (isRemote) {
-    return `Plannotator is listening at ${url}\n\nForward this port to open it locally.`;
+    return `Plannotator is listening at ${url}`;
   }
 
   return `Plannotator is ready at ${url}`;
