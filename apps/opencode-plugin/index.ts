@@ -93,6 +93,50 @@ function resolvePlanContent(plan: string): { content: string; filePath?: string 
   return { content: plan };
 }
 
+function formatServerReadyMessage(url: string, isRemote: boolean): string {
+  if (isRemote) {
+    return `Plannotator is listening at ${url}\n\nForward this port to open it locally.`;
+  }
+
+  return `Plannotator is ready at ${url}`;
+}
+
+async function notifyPlanReviewUrl(
+  client: {
+    session: {
+      prompt: (input: {
+        path: { id: string };
+        body: {
+          noReply: boolean;
+          parts: Array<{ type: "text"; text: string }>;
+        };
+      }) => Promise<unknown>;
+    };
+  },
+  sessionID: string | undefined,
+  url: string,
+  isRemote: boolean,
+): Promise<void> {
+  if (!sessionID) {
+    return;
+  }
+
+  try {
+    await client.session.prompt({
+      path: { id: sessionID },
+      body: {
+        noReply: true,
+        parts: [{
+          type: "text",
+          text: formatServerReadyMessage(url, isRemote),
+        }],
+      },
+    });
+  } catch {
+    // Session may not be available or may reject no-reply prompts while busy.
+  }
+}
+
 // ── Planning prompt ───────────────────────────────────────────────────────
 
 /**
@@ -416,6 +460,7 @@ Do NOT proceed with implementation until your plan is approved.`);
             opencodeClient: ctx.client,
             onReady: async (url, isRemote, port) => {
               handleServerReady(url, isRemote, port);
+              await notifyPlanReviewUrl(ctx.client, context.sessionID, url, isRemote);
             },
           });
 
