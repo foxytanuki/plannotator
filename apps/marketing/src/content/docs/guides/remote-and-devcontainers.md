@@ -6,11 +6,11 @@ sidebar:
 section: "Guides"
 ---
 
-Plannotator works in remote environments — SSH sessions, VS Code Remote, devcontainers, and Docker. The browser can't auto-open on a headless server, so remote mode prints the URL and uses a predictable port range for forwarding.
+Plannotator works in remote environments — SSH sessions, VS Code Remote, devcontainers, and Docker. Remote mode uses predictable port selection for forwarding, and browser-opening behavior depends on your environment.
 
 ## Remote mode
 
-Set `PLANNOTATOR_REMOTE=1` to enable remote mode:
+Set `PLANNOTATOR_REMOTE=1` (or `true`) to force remote mode:
 
 ```bash
 export PLANNOTATOR_REMOTE=1
@@ -19,14 +19,14 @@ export PLANNOTATOR_PORT=9999  # Optional: exact port if you want to pin forwardi
 
 Remote mode changes two behaviors:
 
-1. **Predictable port range** — Uses `19432-19439` by default instead of a random port, so you can set up port forwarding once
-2. **No browser auto-open** — Prints the URL to the terminal instead of trying to open a browser
+1. **Predictable remote port** — Uses `19432-19439` by default instead of a random port, or retries the exact `PLANNOTATOR_PORT` you set
+2. **Browser handling changes** — The URL is always printed; in headless setups you may need to open the forwarded URL manually, while VS Code Remote/devcontainers may still open it for you
 
 If you forward only one remote port, set `PLANNOTATOR_PORT` to that exact port. Plannotator then retries that port repeatedly instead of falling back across the remote range.
 
 ### Legacy detection
 
-Plannotator also detects `SSH_TTY` and `SSH_CONNECTION` environment variables for automatic remote mode. However, `PLANNOTATOR_REMOTE=1` is preferred for explicit control.
+Plannotator also detects `SSH_TTY` and `SSH_CONNECTION` environment variables for automatic remote mode when `PLANNOTATOR_REMOTE` is unset. Use `PLANNOTATOR_REMOTE=1` / `true` to force remote mode or `PLANNOTATOR_REMOTE=0` / `false` to force local mode.
 
 ## VS Code Remote / devcontainers
 
@@ -66,7 +66,7 @@ ssh -L 9999:localhost:9999 your-server
 
 If you're only forwarding one port like `9999`, set `PLANNOTATOR_PORT=9999` so Plannotator retries that exact port instead of the default `19432-19439` range.
 
-Then open `http://localhost:9999` locally when Plannotator prints the URL.
+Then open `http://localhost:9999` locally if Plannotator does not open a browser for you.
 
 ## Docker (without VS Code)
 

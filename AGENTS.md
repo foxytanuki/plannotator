@@ -62,7 +62,8 @@ plannotator/
 │   ├── editor/                   # Plan review App.tsx
 │   └── review-editor/            # Code review UI
 │       ├── App.tsx               # Main review app
-│       ├── components/           # DiffViewer, FileTree, ReviewPanel
+│       ├── components/           # DiffViewer, FileTree, ReviewSidebar
+│       ├── dock/                 # Dockview center panel infrastructure
 │       ├── demoData.ts           # Demo diff for standalone mode
 │       └── index.css             # Review-specific styles
 ├── .claude-plugin/marketplace.json  # For marketplace install
@@ -96,14 +97,14 @@ claude --plugin-dir ./apps/hook
 
 | Variable | Description |
 |----------|-------------|
-| `PLANNOTATOR_REMOTE` | Set to `1` or `true` for remote mode (devcontainer, SSH). Prints the URL, skips browser open, and falls back across `19432-19439` by default. |
+| `PLANNOTATOR_REMOTE` | Set to `1` / `true` for remote mode, `0` / `false` for local mode, or leave unset for SSH auto-detection. Remote mode uses the `19432-19439` fallback range by default; browser-opening behavior depends on the environment. |
 | `PLANNOTATOR_PORT` | Exact port to use. Default: random locally, `19432-19439` fallback for remote sessions. |
 | `PLANNOTATOR_BROWSER` | Custom browser to open plans in. macOS: app name or path. Linux/Windows: executable path. |
 | `PLANNOTATOR_SHARE` | Set to `disabled` to turn off URL sharing entirely. Default: enabled. |
 | `PLANNOTATOR_SHARE_URL` | Custom base URL for share links (self-hosted portal). Default: `https://share.plannotator.ai`. |
 | `PLANNOTATOR_PASTE_URL` | Base URL of the paste service API for short URL sharing. Default: `https://plannotator-paste.plannotator.workers.dev`. |
 
-**Legacy:** `SSH_TTY` and `SSH_CONNECTION` are still detected. Prefer `PLANNOTATOR_REMOTE=1` for explicit control.
+**Legacy:** `SSH_TTY` and `SSH_CONNECTION` are still detected when `PLANNOTATOR_REMOTE` is unset. Set `PLANNOTATOR_REMOTE=1` / `true` to force remote mode or `0` / `false` to force local mode.
 
 **Devcontainer/SSH usage:**
 ```bash
@@ -233,7 +234,7 @@ During normal plan review, an Archive sidebar tab provides the same browsing via
 | `/api/external-annotations` | POST | Add external annotations (single or batch `{ annotations: [...] }`) |
 | `/api/external-annotations` | PATCH | Update fields on a single annotation (`?id=`) |
 | `/api/external-annotations` | DELETE | Remove by `?id=`, `?source=`, or clear all |
-| `/api/agents/capabilities` | GET | Check available agent providers (claude, codex, shell) |
+| `/api/agents/capabilities` | GET | Check available agent providers (claude, codex) |
 | `/api/agents/jobs/stream` | GET | SSE stream for real-time agent job status updates |
 | `/api/agents/jobs` | GET | Snapshot of agent jobs (polling fallback, `?since=N` for version gating) |
 | `/api/agents/jobs` | POST | Launch an agent job (body: `{ provider, command, label }`) |

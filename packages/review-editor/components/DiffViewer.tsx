@@ -1,7 +1,8 @@
 import React, { useMemo, useRef, useEffect, useLayoutEffect, useCallback, useState } from 'react';
-import { FileDiff } from '@pierre/diffs/react';
+import { FileDiff, type DiffLineAnnotation } from '@pierre/diffs/react';
 import { getSingularPatch, processFile } from '@pierre/diffs';
-import { CodeAnnotation, CodeAnnotationType, SelectedLineRange, DiffAnnotationMetadata } from '@plannotator/ui/types';
+import { CodeAnnotation, CodeAnnotationType, SelectedLineRange, DiffAnnotationMetadata, TokenAnnotationMeta } from '@plannotator/ui/types';
+import type { DiffTokenEventBaseProps } from '@pierre/diffs';
 import { useTheme } from '@plannotator/ui/components/ThemeProvider';
 import { CommentPopover } from '@plannotator/ui/components/CommentPopover';
 import { storage } from '@plannotator/ui/utils/storage';
@@ -22,10 +23,98 @@ import {
   swapActiveSearchHighlight,
 } from '../utils/reviewSearchHighlight';
 
+interface PierreDiffContentProps {
+  filePath: string;
+  fileDiff: ReturnType<typeof getSingularPatch>;
+  pierreTheme: { type: 'dark' | 'light'; css: string };
+  diffStyle: 'split' | 'unified';
+  diffOverflow?: 'scroll' | 'wrap';
+  diffIndicators?: 'bars' | 'classic' | 'none';
+  lineDiffType?: 'word-alt' | 'word' | 'char' | 'none';
+  disableLineNumbers?: boolean;
+  disableBackground?: boolean;
+  mergedAnnotations: DiffLineAnnotation<DiffAnnotationMetadata>[];
+  pendingSelection: SelectedLineRange | null;
+  onLineSelectionEnd: (range: SelectedLineRange | null) => void;
+  renderAnnotation: (annotation: { side: string; lineNumber: number; metadata?: DiffAnnotationMetadata }) => React.ReactNode;
+  renderHoverUtility: (getHoveredLine: () => { lineNumber: number; side: 'deletions' | 'additions' } | undefined) => React.ReactNode;
+  onTokenClick?: (props: DiffTokenEventBaseProps, event: MouseEvent) => void;
+  onTokenEnter?: (props: DiffTokenEventBaseProps, event: PointerEvent) => void;
+  onTokenLeave?: (props: DiffTokenEventBaseProps, event: PointerEvent) => void;
+}
+
+const PierreDiffContent = React.memo(({
+  filePath,
+  fileDiff,
+  pierreTheme,
+  diffStyle,
+  diffOverflow,
+  diffIndicators,
+  lineDiffType,
+  disableLineNumbers,
+  disableBackground,
+  mergedAnnotations,
+  pendingSelection,
+  onLineSelectionEnd,
+  renderAnnotation,
+  renderHoverUtility,
+  onTokenClick,
+  onTokenEnter,
+  onTokenLeave,
+}: PierreDiffContentProps) => {
+  return (
+    <FileDiff
+      key={filePath}
+      fileDiff={fileDiff}
+      options={{
+        themeType: pierreTheme.type,
+        unsafeCSS: pierreTheme.css,
+        diffStyle,
+        overflow: diffOverflow,
+        diffIndicators,
+        lineDiffType,
+        disableLineNumbers,
+        disableBackground,
+        hunkSeparators: 'line-info',
+        enableLineSelection: true,
+        enableHoverUtility: true,
+        onLineSelectionEnd,
+        onTokenClick,
+        onTokenEnter,
+        onTokenLeave,
+      }}
+      lineAnnotations={mergedAnnotations}
+      selectedLines={pendingSelection || undefined}
+      renderAnnotation={renderAnnotation}
+      renderHoverUtility={renderHoverUtility}
+    />
+  );
+}, (prev, next) => (
+  prev.filePath === next.filePath &&
+  prev.fileDiff === next.fileDiff &&
+  prev.pierreTheme.type === next.pierreTheme.type &&
+  prev.pierreTheme.css === next.pierreTheme.css &&
+  prev.diffStyle === next.diffStyle &&
+  prev.diffOverflow === next.diffOverflow &&
+  prev.diffIndicators === next.diffIndicators &&
+  prev.lineDiffType === next.lineDiffType &&
+  prev.disableLineNumbers === next.disableLineNumbers &&
+  prev.disableBackground === next.disableBackground &&
+  prev.mergedAnnotations === next.mergedAnnotations &&
+  prev.pendingSelection === next.pendingSelection &&
+  prev.onLineSelectionEnd === next.onLineSelectionEnd &&
+  prev.renderAnnotation === next.renderAnnotation &&
+  prev.renderHoverUtility === next.renderHoverUtility &&
+  prev.onTokenClick === next.onTokenClick &&
+  prev.onTokenEnter === next.onTokenEnter &&
+  prev.onTokenLeave === next.onTokenLeave
+));
+
 interface DiffViewerProps {
   patch: string;
   filePath: string;
   oldPath?: string;
+  isFocused?: boolean;
   diffStyle: 'split' | 'unified';
   diffOverflow?: 'scroll' | 'wrap';
   diffIndicators?: 'bars' | 'classic' | 'none';
@@ -38,7 +127,7 @@ interface DiffViewerProps {
   selectedAnnotationId: string | null;
   pendingSelection: SelectedLineRange | null;
   onLineSelection: (range: SelectedLineRange | null) => void;
-  onAddAnnotation: (type: CodeAnnotationType, text?: string, suggestedCode?: string, originalCode?: string) => void;
+  onAddAnnotation: (type: CodeAnnotationType, text?: string, suggestedCode?: string, originalCode?: string, tokenMeta?: TokenAnnotationMeta) => void;
   onAddFileComment: (text: string) => void;
   onEditAnnotation: (id: string, text?: string, suggestedCode?: string, originalCode?: string) => void;
   onSelectAnnotation: (id: string | null) => void;
@@ -69,6 +158,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   patch,
   filePath,
   oldPath,
+  isFocused = false,
   diffStyle,
   diffOverflow,
   diffIndicators = 'bars',
@@ -107,6 +197,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
 }) => {
   const { theme, colorTheme, resolvedMode } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
+  const splitSurfaceRef = useRef<HTMLDivElement>(null);
   const [fileCommentAnchor, setFileCommentAnchor] = useState<HTMLElement | null>(null);
 
   // Resizable split pane — only applies when Pierre renders a two-column grid
@@ -134,13 +225,13 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
 
   const handleSplitDragStart = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
-    const container = containerRef.current;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
+    if (!splitSurfaceRef.current) return;
     setIsDraggingSplit(true);
 
-    const onMove = (e: PointerEvent) => {
-      const ratio = (e.clientX - rect.left) / rect.width;
+    const onMove = (moveEvent: PointerEvent) => {
+      const rect = splitSurfaceRef.current?.getBoundingClientRect();
+      if (!rect || rect.width <= 0) return;
+      const ratio = (moveEvent.clientX - rect.left) / rect.width;
       setSplitRatio(Math.min(0.8, Math.max(0.2, ratio)));
     };
 
@@ -160,7 +251,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
     storage.setItem('review-split-ratio', '0.5');
   }, []);
 
-  const toolbar = useAnnotationToolbar({ patch, filePath, onLineSelection, onAddAnnotation, onEditAnnotation });
+  const toolbar = useAnnotationToolbar({ patch, filePath, isFocused, onLineSelection, onAddAnnotation, onEditAnnotation });
 
   // Parse patch into FileDiffMetadata for @pierre/diffs FileDiff component
   const fileDiff = useMemo(() => getSingularPatch(patch), [patch]);
@@ -188,11 +279,16 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   // against the complete file (isPartial: false), enabling expansion.
   const augmentedDiff = useMemo(() => {
     if (!fileContents || fileContents.forPath !== filePath || (fileContents.old == null && fileContents.new == null)) return fileDiff;
-    const result = processFile(patch, {
-      oldFile: fileContents.old != null ? { name: oldPath || filePath, contents: fileContents.old } : undefined,
-      newFile: fileContents.new != null ? { name: filePath, contents: fileContents.new } : undefined,
-    });
-    return result || fileDiff;
+    try {
+      const result = processFile(patch, {
+        oldFile: fileContents.old != null ? { name: oldPath || filePath, contents: fileContents.old } : undefined,
+        newFile: fileContents.new != null ? { name: filePath, contents: fileContents.new } : undefined,
+      });
+      return result || fileDiff;
+    } catch {
+      // Fall back to partial diff if file contents don't match hunks
+      return fileDiff;
+    }
   }, [patch, filePath, oldPath, fileContents, fileDiff]);
 
   const previousScrollFilePathRef = useRef(filePath);
@@ -277,6 +373,8 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           suggestedCode: ann.suggestedCode,
           originalCode: ann.originalCode,
           author: ann.author,
+          severity: ann.severity,
+          reasoning: ann.reasoning,
         } as DiffAnnotationMetadata,
       }));
   }, [annotations]);
@@ -361,6 +459,19 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
     );
   }, [toolbar.handleLineSelectionEnd]);
 
+  // Token interaction handlers (code area clicks)
+  const handleTokenClick = useCallback((props: DiffTokenEventBaseProps, event: MouseEvent) => {
+    toolbar.handleTokenClick(props, event);
+  }, [toolbar.handleTokenClick]);
+
+  const handleTokenEnter = useCallback((props: DiffTokenEventBaseProps) => {
+    props.tokenElement.classList.add('pn-token-hover');
+  }, []);
+
+  const handleTokenLeave = useCallback((props: DiffTokenEventBaseProps) => {
+    props.tokenElement.classList.remove('pn-token-hover');
+  }, []);
+
   // Inject resolved colors into @pierre/diffs shadow DOM.
   // CSS custom properties don't cross the shadow boundary, so we read computed
   // values and pass them via unsafeCSS. Single state object avoids split renders.
@@ -372,6 +483,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
       const bg = styles.getPropertyValue('--background').trim();
       const fg = styles.getPropertyValue('--foreground').trim();
       const muted = styles.getPropertyValue('--muted').trim();
+      const primary = styles.getPropertyValue('--primary').trim();
       if (!bg || !fg) return;
 
       const fontCSS = fontFamily || fontSize ? `
@@ -396,13 +508,36 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           [data-column-number] { background-color: ${bg} !important; }
           [data-diffs-header] [data-title] { display: none !important; }
           [data-diff-type='split'][data-overflow='scroll'] {
-            grid-template-columns: var(--split-left, 1fr) var(--split-right, 1fr) !important;
+            grid-template-columns:
+              minmax(0, var(--split-left, 1fr))
+              minmax(0, var(--split-right, 1fr)) !important;
+          }
+          [data-diff-type='split'][data-overflow='scroll'] > [data-code][data-deletions],
+          [data-diff-type='split'][data-overflow='scroll'] > [data-code][data-additions],
+          [data-diff-type='split'][data-overflow='scroll'] > [data-code][data-deletions] [data-content],
+          [data-diff-type='split'][data-overflow='scroll'] > [data-code][data-additions] [data-content] {
+            min-width: 0 !important;
+          }
+          .pn-token-hover {
+            text-decoration: underline;
+            text-decoration-color: ${primary || 'oklch(0.70 0.20 280)'};
+            text-decoration-thickness: 1.5px;
+            text-underline-offset: 2px;
+            cursor: pointer;
           }
           ${fontCSS}
         `,
       });
     });
   }, [resolvedMode, colorTheme, fontFamily, fontSize]);
+
+  const splitGridStyle = useMemo(() => {
+    if (!isSplitLayout || diffOverflow === 'wrap') return undefined;
+    return {
+      '--split-left': `${splitRatio}fr`,
+      '--split-right': `${1 - splitRatio}fr`,
+    } as React.CSSProperties;
+  }, [diffOverflow, isSplitLayout, splitRatio]);
 
   return (
     <div className="h-full flex flex-col">
@@ -420,48 +555,41 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
       />
 
       <div ref={containerRef} className={`flex-1 overflow-auto relative ${isDraggingSplit ? 'select-none' : ''}`} onMouseMove={toolbar.handleMouseMove}>
-      {isSplitLayout && diffOverflow !== 'wrap' && (
-        <div
-          className="absolute top-0 bottom-0 z-10 cursor-col-resize group"
-          style={{ left: `${splitRatio * 100}%`, width: 9, marginLeft: -4 }}
-          onPointerDown={handleSplitDragStart}
-          onDoubleClick={resetSplitRatio}
-        >
-          <div className="absolute inset-y-0 left-1/2 w-px bg-border group-hover:bg-primary/50 group-active:bg-primary/70 transition-colors" />
+        <div className="p-4">
+          <div ref={splitSurfaceRef} className="relative min-w-0" style={splitGridStyle}>
+            {isSplitLayout && diffOverflow !== 'wrap' && (
+              <div
+                className="absolute top-0 bottom-0 z-10 cursor-col-resize group"
+                style={{ left: `${splitRatio * 100}%`, width: 9, marginLeft: -4 }}
+                onPointerDown={handleSplitDragStart}
+                onDoubleClick={resetSplitRatio}
+              >
+                <div className="pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-border transition-[width,background-color] group-hover:w-0.5 group-hover:bg-primary/50 group-active:w-0.5 group-active:bg-primary/70" />
+              </div>
+            )}
+            <PierreDiffContent
+              filePath={filePath}
+              fileDiff={augmentedDiff}
+              pierreTheme={pierreTheme}
+              diffStyle={diffStyle}
+              diffOverflow={diffOverflow}
+              diffIndicators={diffIndicators}
+              lineDiffType={lineDiffType}
+              disableLineNumbers={disableLineNumbers}
+              disableBackground={disableBackground}
+              mergedAnnotations={mergedAnnotations}
+              pendingSelection={pendingSelection}
+              onLineSelectionEnd={toolbar.handleLineSelectionEnd}
+              renderAnnotation={renderAnnotation}
+              renderHoverUtility={renderHoverUtility}
+              onTokenClick={handleTokenClick}
+              onTokenEnter={handleTokenEnter}
+              onTokenLeave={handleTokenLeave}
+            />
+          </div>
         </div>
-      )}
-      <div
-        className="p-4"
-        style={isSplitLayout && diffOverflow !== 'wrap' ? {
-          '--split-left': `${splitRatio}fr`,
-          '--split-right': `${1 - splitRatio}fr`,
-        } as React.CSSProperties : undefined}
-      >
-        <FileDiff
-          key={filePath}
-          fileDiff={augmentedDiff}
-          options={{
-            themeType: pierreTheme.type,
-            unsafeCSS: pierreTheme.css,
-            diffStyle,
-            overflow: diffOverflow,
-            diffIndicators,
-            lineDiffType,
-            disableLineNumbers,
-            disableBackground,
-            hunkSeparators: 'line-info',
-            enableLineSelection: true,
-            enableHoverUtility: true,
-            onLineSelectionEnd: toolbar.handleLineSelectionEnd,
-          }}
-          lineAnnotations={mergedAnnotations}
-          selectedLines={pendingSelection || undefined}
-          renderAnnotation={renderAnnotation}
-          renderHoverUtility={renderHoverUtility}
-        />
-      </div>
 
-      {toolbar.toolbarState && (
+      {toolbar.toolbarState && !toolbar.showCodeModal && (
         <AnnotationToolbar
           toolbarState={toolbar.toolbarState}
           toolbarRef={toolbar.toolbarRef}
@@ -471,6 +599,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           setSuggestedCode={toolbar.setSuggestedCode}
           showSuggestedCode={toolbar.showSuggestedCode}
           setShowSuggestedCode={toolbar.setShowSuggestedCode}
+          selectedOriginalCode={toolbar.selectedOriginalCode}
           setShowCodeModal={toolbar.setShowCodeModal}
           isEditing={!!toolbar.editingAnnotationId}
           onSubmit={toolbar.handleSubmitAnnotation}

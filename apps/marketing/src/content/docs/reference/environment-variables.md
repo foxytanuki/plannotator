@@ -12,7 +12,7 @@ All Plannotator environment variables and their defaults.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PLANNOTATOR_REMOTE` | auto-detect | Set to `1` or `true` to force remote mode. Remote mode prints the URL, skips browser auto-open, and falls back across ports `19432-19439` by default. |
+| `PLANNOTATOR_REMOTE` | auto-detect | Set to `1` or `true` to force remote mode, `0` or `false` to force local mode, or leave unset to auto-detect via `SSH_TTY` / `SSH_CONNECTION`. Remote mode uses the `19432-19439` fallback range by default; browser-opening behavior depends on the environment. |
 | `PLANNOTATOR_PORT` | random (local) / `19432-19439` (remote) | Exact server port. When set, Plannotator retries that port repeatedly; otherwise local sessions use a random port and remote sessions try `19432-19439`. |
 | `PLANNOTATOR_BROWSER` | system default | Custom browser to open the UI in. macOS: app name or path. Linux/Windows: executable path. Can also be a script. Takes priority over `BROWSER`. Also settable per-invocation with `--browser`. |
 | `BROWSER` | (none) | Standard env var for specifying a browser. VS Code sets this automatically in devcontainers. Used as fallback when `PLANNOTATOR_BROWSER` is not set. |
@@ -46,11 +46,11 @@ When running your own paste service binary, these variables configure it:
 
 ## Remote mode behavior
 
-When `PLANNOTATOR_REMOTE=1` or SSH is detected:
+When remote mode is forced with `PLANNOTATOR_REMOTE=1` / `true`, or SSH is detected while `PLANNOTATOR_REMOTE` is unset:
 
 - Server tries `PLANNOTATOR_PORT` exactly when set, otherwise falls back across `19432-19439`
-- Browser auto-open is skipped
-- The URL is printed to stderr for manual access
+- Browser-opening behavior depends on the environment and configured browser handler
+- The URL is printed so headless setups can open the forwarded address manually
 
 ### Legacy SSH detection
 
@@ -61,7 +61,7 @@ These environment variables are still detected for backwards compatibility:
 | `SSH_TTY` | Set by SSH when a TTY is allocated |
 | `SSH_CONNECTION` | Set by SSH with connection details |
 
-If either is present, Plannotator enables remote mode automatically. Prefer `PLANNOTATOR_REMOTE=1` for explicit control.
+If either is present, Plannotator enables remote mode automatically when `PLANNOTATOR_REMOTE` is unset. Set `PLANNOTATOR_REMOTE=1` / `true` to force remote mode or `0` / `false` to force local mode.
 
 ## Port resolution order
 

@@ -70,6 +70,8 @@ export interface GithubPRMetadata {
   headBranch: string;
   baseSha: string;
   headSha: string;
+  /** Merge-base SHA — the common ancestor commit used to compute the PR diff. Differs from baseSha when the base branch has moved. */
+  mergeBaseSha?: string;
   url: string;
 }
 
@@ -85,6 +87,8 @@ export interface GitlabMRMetadata {
   headBranch: string;
   baseSha: string;
   headSha: string;
+  /** Merge-base SHA — the common ancestor commit used to compute the MR diff. */
+  mergeBaseSha?: string;
   url: string;
 }
 
@@ -107,6 +111,7 @@ export interface PRReview {
   state: string;
   body: string;
   submittedAt: string;
+  url?: string;
 }
 
 export interface PRCheck {
@@ -123,6 +128,26 @@ export interface PRLinkedIssue {
   repo: string;
 }
 
+export interface PRThreadComment {
+  id: string;
+  author: string;
+  body: string;
+  createdAt: string;
+  url: string;
+  diffHunk?: string;
+}
+
+export interface PRReviewThread {
+  id: string;
+  isResolved: boolean;
+  isOutdated: boolean;
+  path: string;
+  line: number | null;
+  startLine: number | null;
+  diffSide: 'LEFT' | 'RIGHT' | null;
+  comments: PRThreadComment[];
+}
+
 export interface PRContext {
   body: string;
   state: string;
@@ -133,6 +158,7 @@ export interface PRContext {
   mergeStateStatus: string;
   comments: PRComment[];
   reviews: PRReview[];
+  reviewThreads: PRReviewThread[];
   checks: PRCheck[];
   linkedIssues: PRLinkedIssue[];
 }

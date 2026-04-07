@@ -32,12 +32,33 @@ function parseConfiguredPort(): number | null {
 	return null;
 }
 
-/** Check if running in a remote session (SSH, devcontainer, etc.). */
-function isRemoteSession(): boolean {
+/**
+ * Check if running in a remote session (SSH, devcontainer, etc.)
+ * Honors PLANNOTATOR_REMOTE as a tri-state override, or detects SSH_TTY/SSH_CONNECTION.
+ */
+function getRemoteOverride(): boolean | null {
 	const remote = process.env.PLANNOTATOR_REMOTE;
+	if (remote === undefined) {
+		return null;
+	}
+
 	if (remote === "1" || remote?.toLowerCase() === "true") {
 		return true;
 	}
+
+	if (remote === "0" || remote?.toLowerCase() === "false") {
+		return false;
+	}
+
+	return null;
+}
+
+export function isRemoteSession(): boolean {
+	const remoteOverride = getRemoteOverride();
+	if (remoteOverride !== null) {
+		return remoteOverride;
+	}
+	// Legacy SSH detection
 	if (process.env.SSH_TTY || process.env.SSH_CONNECTION) {
 		return true;
 	}
@@ -67,6 +88,15 @@ function getServerPortStrategy(): PortStrategy {
 	}
 
 	return { port: 0, portSource: "random", attemptPorts: [0] };
+}
+
+/**
+ * Get the preferred server port to use.
+ * Returns the first port that listenOnPort will try, plus the source label.
+ */
+export function getServerPort(): { port: number; portSource: PortSource } {
+	const strategy = getServerPortStrategy();
+	return { port: strategy.port, portSource: strategy.portSource };
 }
 
 const RETRY_DELAY_MS = 500;
@@ -146,7 +176,11 @@ export async function listenOnPort(
 	throw new Error("Failed to bind port");
 }
 
-/** Open URL in system browser. */
+/**
+ * Open URL in system browser (Node-compatible, no Bun $ dependency).
+ * Honors PLANNOTATOR_BROWSER and BROWSER env vars.
+ * Returns { opened: true } if browser was opened, { opened: false, isRemote: true, url } if remote session.
+ */
 export function openBrowser(url: string): {
 	opened: boolean;
 	isRemote?: boolean;

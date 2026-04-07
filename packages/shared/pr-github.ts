@@ -4,7 +4,7 @@
  * All functions use the `gh` CLI via the PRRuntime abstraction.
  */
 
-import type { PRRuntime, PRMetadata, PRContext, PRReviewFileComment, CommandResult } from "./pr-provider";
+import type { PRRuntime, PRMetadata, PRContext, PRReviewThread, PRThreadComment, PRReviewFileComment, CommandResult } from "./pr-provider";
 import { encodeApiFilePath } from "./pr-provider";
 
 // GitHub-specific PRRef shape (used internally)
@@ -101,6 +101,21 @@ export async function fetchGhPR(
     url: string;
   };
 
+  // Fetch the merge-base SHA — the common ancestor commit GitHub uses to compute the PR diff.
+  // baseSha (baseRefOid) is the tip of the base branch, which may have moved since the branch point.
+  // File contents must be fetched at the merge-base to match the diff hunks.
+  let mergeBaseSha: string | undefined;
+  try {
+    const compareResult = await runtime.runCommand("gh", hostnameArgs(ref.host, [
+      "api",
+      `repos/${ref.owner}/${ref.repo}/compare/${raw.baseRefOid}...${raw.headRefOid}`,
+      "--jq", ".merge_base_commit.sha",
+    ]));
+    if (compareResult.exitCode === 0 && compareResult.stdout.trim()) {
+      mergeBaseSha = compareResult.stdout.trim();
+    }
+  } catch { /* fallback to baseSha if compare API fails */ }
+
   const metadata: PRMetadata = {
     platform: "github",
     host: ref.host,
@@ -114,6 +129,7 @@ export async function fetchGhPR(
     headBranch: raw.headRefName,
     baseSha: raw.baseRefOid,
     headSha: raw.headRefOid,
+    mergeBaseSha,
     url: raw.url,
   };
 
@@ -161,7 +177,9 @@ function parseGhPRContext(raw: Record<string, unknown>): PRContext {
       state: str(r?.state),
       body: str(r?.body),
       submittedAt: str(r?.submittedAt),
+      ...(r?.url ? { url: str(r.url) } : {}),
     })),
+    reviewThreads: [],  // populated via GraphQL after initial fetch
     checks: arr(raw.statusCheckRollup).map((c: any) => ({
       name: str(c?.name),
       status: str(c?.status),
@@ -198,7 +216,87 @@ export async function fetchGhPRContext(
   }
 
   const raw = JSON.parse(result.stdout) as Record<string, unknown>;
-  return parseGhPRContext(raw);
+  const context = parseGhPRContext(raw);
+
+  // Fetch inline review threads via GraphQL (parallel-safe, non-blocking failure)
+  try {
+    context.reviewThreads = await fetchGhReviewThreads(runtime, ref);
+  } catch {
+    // GraphQL may not be available or may fail — degrade gracefully
+    context.reviewThreads = [];
+  }
+
+  return context;
+}
+
+// --- Review Threads (GraphQL) ---
+
+const REVIEW_THREADS_QUERY = `
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          isOutdated
+          line
+          startLine
+          path
+          diffSide
+          comments(first: 50) {
+            nodes {
+              id
+              body
+              author { login }
+              createdAt
+              url
+              diffHunk
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+async function fetchGhReviewThreads(
+  runtime: PRRuntime,
+  ref: GhPRRef,
+): Promise<PRReviewThread[]> {
+  const result = await runtime.runCommand("gh", hostnameArgs(ref.host, [
+    "api", "graphql",
+    "-f", `query=${REVIEW_THREADS_QUERY}`,
+    "-f", `owner=${ref.owner}`,
+    "-f", `repo=${ref.repo}`,
+    "-F", `number=${ref.number}`,
+  ]));
+
+  if (result.exitCode !== 0) return [];
+
+  const data = JSON.parse(result.stdout);
+  const threads = data?.data?.repository?.pullRequest?.reviewThreads?.nodes;
+  if (!Array.isArray(threads)) return [];
+
+  return threads.map((t: any): PRReviewThread => ({
+    id: String(t.id ?? ''),
+    isResolved: t.isResolved === true,
+    isOutdated: t.isOutdated === true,
+    path: String(t.path ?? ''),
+    line: typeof t.line === 'number' ? t.line : null,
+    startLine: typeof t.startLine === 'number' ? t.startLine : null,
+    diffSide: t.diffSide === 'LEFT' || t.diffSide === 'RIGHT' ? t.diffSide : null,
+    comments: Array.isArray(t.comments?.nodes)
+      ? t.comments.nodes.map((c: any): PRThreadComment => ({
+          id: String(c.id ?? ''),
+          author: c.author?.login ? String(c.author.login) : '',
+          body: String(c.body ?? ''),
+          createdAt: String(c.createdAt ?? ''),
+          url: String(c.url ?? ''),
+          ...(c.diffHunk ? { diffHunk: String(c.diffHunk) } : {}),
+        }))
+      : [],
+  }));
 }
 
 // --- File Content ---

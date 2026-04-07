@@ -2,7 +2,7 @@
  * Remote session detection and port configuration
  *
  * Environment variables:
- *   PLANNOTATOR_REMOTE - Set to "1" or "true" to force remote mode (preferred)
+ *   PLANNOTATOR_REMOTE - Set to "1"/"true" to force remote, "0"/"false" to force local
  *   PLANNOTATOR_PORT   - Exact port to use (default: random locally, 19432-19439 fallback remotely)
  *
  * Legacy (still supported): SSH_TTY, SSH_CONNECTION
@@ -37,14 +37,30 @@ function parseConfiguredPort(): number | null {
   return null;
 }
 
+function getRemoteOverride(): boolean | null {
+  const remote = process.env.PLANNOTATOR_REMOTE;
+  if (remote === undefined) {
+    return null;
+  }
+
+  if (remote === "1" || remote?.toLowerCase() === "true") {
+    return true;
+  }
+
+  if (remote === "0" || remote?.toLowerCase() === "false") {
+    return false;
+  }
+
+  return null;
+}
+
 /**
  * Check if running in a remote session (SSH, devcontainer, etc.)
  */
 export function isRemoteSession(): boolean {
-  // New preferred env var
-  const remote = process.env.PLANNOTATOR_REMOTE;
-  if (remote === "1" || remote?.toLowerCase() === "true") {
-    return true;
+  const remoteOverride = getRemoteOverride();
+  if (remoteOverride !== null) {
+    return remoteOverride;
   }
 
   // Legacy: SSH_TTY/SSH_CONNECTION (deprecated, silent)

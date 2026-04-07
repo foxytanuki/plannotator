@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { type Origin, getAgentName } from '@plannotator/shared/agents';
 import { ThemeProvider, useTheme } from '@plannotator/ui/components/ThemeProvider';
-import { ModeToggle } from '@plannotator/ui/components/ModeToggle';
 import { ConfirmDialog } from '@plannotator/ui/components/ConfirmDialog';
 import { Settings } from '@plannotator/ui/components/Settings';
 import { FeedbackButton, ApproveButton } from '@plannotator/ui/components/ToolbarButtons';
@@ -19,24 +18,40 @@ import { getAgentSwitchSettings, getEffectiveAgentName } from '@plannotator/ui/u
 import { getAIProviderSettings, saveAIProviderSettings, getPreferredModel } from '@plannotator/ui/utils/aiProvider';
 import { AISetupDialog } from '@plannotator/ui/components/AISetupDialog';
 import { needsAISetup } from '@plannotator/ui/utils/aiSetup';
-import { CodeAnnotation, CodeAnnotationType, SelectedLineRange } from '@plannotator/ui/types';
+import { CodeAnnotation, CodeAnnotationType, SelectedLineRange, TokenAnnotationMeta } from '@plannotator/ui/types';
 import { useResizablePanel } from '@plannotator/ui/hooks/useResizablePanel';
 import { useCodeAnnotationDraft } from '@plannotator/ui/hooks/useCodeAnnotationDraft';
 import { useGitAdd } from './hooks/useGitAdd';
 import { generateId } from './utils/generateId';
 import { useAIChat } from './hooks/useAIChat';
 import { extractLinesFromPatch } from './utils/patchParser';
-import { isTypingTarget, useReviewSearch } from './hooks/useReviewSearch';
+import { isTypingTarget, useReviewSearch, type ReviewSearchMatch } from './hooks/useReviewSearch';
 import { useEditorAnnotations } from '@plannotator/ui/hooks/useEditorAnnotations';
 import { useExternalAnnotations } from '@plannotator/ui/hooks/useExternalAnnotations';
 import { useAgentJobs } from '@plannotator/ui/hooks/useAgentJobs';
 import { exportEditorAnnotations } from '@plannotator/ui/utils/parser';
 import { ResizeHandle } from '@plannotator/ui/components/ResizeHandle';
-import { DiffViewer } from './components/DiffViewer';
-import { ReviewPanel } from './components/ReviewPanel';
+import { DockviewReact, type DockviewReadyEvent, type DockviewApi } from 'dockview-react';
+import { ReviewHeaderMenu } from './components/ReviewHeaderMenu';
+import { ReviewSidebar } from './components/ReviewSidebar';
 import { FileTree } from './components/FileTree';
 import { DEMO_DIFF } from './demoData';
 import { exportReviewFeedback } from './utils/exportFeedback';
+import { ReviewStateProvider, type ReviewState } from './dock/ReviewStateContext';
+import { JobLogsProvider } from './dock/JobLogsContext';
+import { reviewPanelComponents } from './dock/reviewPanelComponents';
+import { ReviewDockTabRenderer } from './dock/ReviewDockTabRenderer';
+import { usePRContext } from './hooks/usePRContext';
+import {
+  REVIEW_PANEL_TYPES,
+  REVIEW_DIFF_PANEL_ID,
+  makeReviewAgentJobPanelId,
+  getReviewDiffPanelFilePath,
+  isReviewDiffPanelId,
+  REVIEW_PR_SUMMARY_PANEL_ID,
+  REVIEW_PR_COMMENTS_PANEL_ID,
+  REVIEW_PR_CHECKS_PANEL_ID,
+} from './dock/reviewPanelTypes';
 import type { DiffFile } from './types';
 import type { DiffOption, WorktreeInfo, GitContext } from '@plannotator/shared/types';
 import type { PRMetadata } from '@plannotator/shared/pr-provider';
@@ -87,7 +102,12 @@ function parseDiffToFiles(rawPatch: string): DiffFile[] {
   return files;
 }
 
+function getFileTabTitle(filePath: string): string {
+  return filePath.split('/').pop() ?? filePath;
+}
+
 const ReviewApp: React.FC = () => {
+  const { resolvedMode } = useTheme();
   const [diffData, setDiffData] = useState<DiffData | null>(null);
   const [files, setFiles] = useState<DiffFile[]>([]);
   const [activeFileIndex, setActiveFileIndex] = useState(0);
@@ -95,6 +115,8 @@ const ReviewApp: React.FC = () => {
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [pendingSelection, setPendingSelection] = useState<SelectedLineRange | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showWorktreeDialog, setShowWorktreeDialog] = useState(false);
+  const [openSettingsMenu, setOpenSettingsMenu] = useState(false);
   const [showNoAnnotationsDialog, setShowNoAnnotationsDialog] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const diffStyle = useConfigValue('diffStyle');
@@ -123,6 +145,7 @@ const ReviewApp: React.FC = () => {
 
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [copyRawDiffStatus, setCopyRawDiffStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
   const [hideViewedFiles, setHideViewedFiles] = useState(false);
   const [origin, setOrigin] = useState<Origin | null>(null);
@@ -130,6 +153,7 @@ const ReviewApp: React.FC = () => {
   const [isWSL, setIsWSL] = useState(false);
   const [diffType, setDiffType] = useState<string>('uncommitted');
   const [gitContext, setGitContext] = useState<GitContext | null>(null);
+  const [agentCwd, setAgentCwd] = useState<string | null>(null);
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
   const [isSendingFeedback, setIsSendingFeedback] = useState(false);
@@ -175,12 +199,85 @@ const ReviewApp: React.FC = () => {
   const mrLabel = prMetadata ? getMRLabel(prMetadata) : 'PR';
   const mrNumberLabel = prMetadata ? getMRNumberLabel(prMetadata) : '';
   const displayRepo = prMetadata ? getDisplayRepo(prMetadata) : '';
+  const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
 
   const identity = useConfigValue('displayName');
 
   const clearPendingSelection = useCallback(() => {
     setPendingSelection(null);
   }, []);
+
+  // VS Code editor annotations (only polls when inside VS Code webview)
+  const { editorAnnotations, deleteEditorAnnotation } = useEditorAnnotations();
+
+  // External annotations (SSE-based, for any external tool)
+  // TODO: Replace !!origin with a dedicated isApiMode boolean (set on /api/diff success/failure).
+  // origin is an identity field, not a connectivity signal — the standalone dev server
+  // (apps/review/) doesn't set it, so external annotations are silently disabled there.
+  // The same !!origin proxy is used elsewhere in this file (draft hook, feedback guard, conditional UI)
+  // so this should be addressed as a broader refactor.
+  const { externalAnnotations, updateExternalAnnotation, deleteExternalAnnotation } = useExternalAnnotations<CodeAnnotation>({ enabled: !!origin });
+  const agentJobs = useAgentJobs({ enabled: !!origin });
+
+  // Dockview center panel API for the review workspace.
+  const [dockApi, setDockApi] = useState<DockviewApi | null>(null);
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  const needsInitialDiffPanel = useRef(true);
+
+  // PR context (lifted from sidebar so center dock PR panels can access it)
+  const { prContext, isLoading: isPRContextLoading, error: prContextError, fetchContext: fetchPRContext } = usePRContext(prMetadata ?? null);
+
+  // Sync activeFileIndex from dockview's active panel (wired in handleDockReady)
+
+  const openDiffFile = useCallback((filePath: string) => {
+    const file = files.find(candidate => candidate.path === filePath);
+    if (!file) return;
+
+    if (!dockApi) {
+      const fileIndex = files.findIndex(candidate => candidate.path === filePath);
+      if (fileIndex !== -1) {
+        setActiveFileIndex(fileIndex);
+      }
+      return;
+    }
+
+    const existing = dockApi.getPanel(REVIEW_DIFF_PANEL_ID);
+    if (existing) {
+      const existingFilePath = getReviewDiffPanelFilePath(existing.params);
+      if (existingFilePath === filePath) {
+        if (dockApi.activePanel?.id !== REVIEW_DIFF_PANEL_ID) {
+          existing.api.setActive();
+        }
+        const fileIndex = files.findIndex(candidate => candidate.path === filePath);
+        if (fileIndex !== -1) {
+          setActiveFileIndex(fileIndex);
+        }
+        needsInitialDiffPanel.current = false;
+        return;
+      }
+
+      setPendingSelection(null);
+      existing.api.updateParameters({ filePath });
+      existing.api.setTitle(getFileTabTitle(file.path));
+      existing.api.setActive();
+    } else {
+      setPendingSelection(null);
+      dockApi.addPanel({
+        id: REVIEW_DIFF_PANEL_ID,
+        component: REVIEW_PANEL_TYPES.DIFF,
+        title: getFileTabTitle(file.path),
+        params: { filePath },
+      });
+    }
+
+    setActiveFileIndex(files.findIndex(candidate => candidate.path === filePath));
+    needsInitialDiffPanel.current = false;
+  }, [dockApi, files]);
+
+  const handleRevealSearchMatch = useCallback((match: ReviewSearchMatch) => {
+    openDiffFile(match.filePath);
+  }, [openDiffFile]);
 
   const {
     searchQuery,
@@ -201,22 +298,15 @@ const ReviewApp: React.FC = () => {
     handleSelectSearchMatch,
   } = useReviewSearch({
     files,
-    activeFileIndex,
-    setActiveFileIndex,
-    clearPendingSelection,
+    activeFilePath: files[activeFileIndex]?.path ?? null,
+    onRevealMatch: handleRevealSearchMatch,
   });
 
-  // VS Code editor annotations (only polls when inside VS Code webview)
-  const { editorAnnotations, deleteEditorAnnotation } = useEditorAnnotations();
-
-  // External annotations (SSE-based, for any external tool)
-  // TODO: Replace !!origin with a dedicated isApiMode boolean (set on /api/diff success/failure).
-  // origin is an identity field, not a connectivity signal — the standalone dev server
-  // (apps/review/) doesn't set it, so external annotations are silently disabled there.
-  // The same !!origin proxy is used elsewhere in this file (draft hook, feedback guard, conditional UI)
-  // so this should be addressed as a broader refactor.
-  const { externalAnnotations, updateExternalAnnotation, deleteExternalAnnotation } = useExternalAnnotations<CodeAnnotation>({ enabled: !!origin });
-  const agentJobs = useAgentJobs({ enabled: !!origin });
+  const hasSearchableFiles = files.length > 0;
+  const shouldShowFileTree =
+    hasSearchableFiles ||
+    !!gitContext?.diffOptions?.length ||
+    !!gitContext?.worktrees?.length;
 
   // Merge local + SSE annotations, deduping draft-restored externals against
   // live SSE versions. Prefer the SSE version when both exist (same source,
@@ -269,7 +359,7 @@ const ReviewApp: React.FC = () => {
     };
   });
   const [showAISetup, setShowAISetup] = useState(false);
-  const [reviewPanelTabOverride, setReviewPanelTabOverride] = useState<'ai' | undefined>(undefined);
+  const [sidebarTabOverride, setSidebarTabOverride] = useState<'ai' | undefined>(undefined);
   const aiChat = useAIChat({
     patch: diffData?.rawPatch ?? '',
     providerId: aiConfig.providerId,
@@ -327,7 +417,7 @@ const ReviewApp: React.FC = () => {
   }, [pendingSelection, files, activeFileIndex, aiChat]);
 
   const handleViewAIResponse = useCallback((questionId?: string) => {
-    setReviewPanelTabOverride('ai');
+    setSidebarTabOverride('ai');
     setIsPanelOpen(true);
     if (questionId) {
       setScrollToQuestionId(questionId);
@@ -336,26 +426,15 @@ const ReviewApp: React.FC = () => {
   }, []);
 
   const handleScrollToAILines = useCallback((filePath: string, lineStart: number, lineEnd: number, side: 'old' | 'new') => {
-    // Switch to the file containing the referenced lines
-    const fileIndex = files.findIndex(f => f.path === filePath);
-    if (fileIndex !== -1 && fileIndex !== activeFileIndex) {
-      setPendingSelection(null);
-      setActiveFileIndex(fileIndex);
-    }
+    openDiffFile(filePath);
     // Set a selection to highlight the lines
     setPendingSelection({
       start: lineStart,
       end: lineEnd,
       side: side === 'new' ? 'additions' : 'deletions',
     });
-  }, [files, activeFileIndex]);
+  }, [openDiffFile]);
 
-  // AI messages for the current file (for inline markers)
-  const aiMessagesForCurrentFile = useMemo(() => {
-    const activeFile = files[activeFileIndex];
-    if (!activeFile) return [];
-    return aiChat.messages.filter(m => m.question.filePath === activeFile.path);
-  }, [aiChat.messages, files, activeFileIndex]);
 
   // AI messages overlapping the current selection (for toolbar history)
   const aiHistoryForSelection = useMemo(() => {
@@ -376,7 +455,7 @@ const ReviewApp: React.FC = () => {
   const [scrollToQuestionId, setScrollToQuestionId] = useState<string | null>(null);
   const handleClickAIMarker = useCallback((questionId: string) => {
     setScrollToQuestionId(questionId);
-    setReviewPanelTabOverride('ai');
+    setSidebarTabOverride('ai');
     setIsPanelOpen(true);
     // Clear after a tick so it can re-trigger for the same question
     setTimeout(() => setScrollToQuestionId(null), 500);
@@ -395,12 +474,97 @@ const ReviewApp: React.FC = () => {
   });
   const isResizing = panelResize.isDragging || fileTreeResize.isDragging;
 
+  // Dockview ready handler — stores API and wires active panel tracking.
+  // Initial panel creation happens in the effect below once dockApi is set.
+  const handleDockReady = useCallback((event: DockviewReadyEvent) => {
+    setDockApi(event.api);
+
+    // Sync activeFileIndex when user switches between dock tabs
+    event.api.onDidActivePanelChange((panel) => {
+      if (!panel || !isReviewDiffPanelId(panel.id)) return;
+      const filePath = getReviewDiffPanelFilePath(panel.params);
+      if (!filePath) return;
+      const fileIndex = filesRef.current.findIndex(file => file.path === filePath);
+      if (fileIndex !== -1) {
+        setActiveFileIndex(fileIndex);
+      }
+    });
+
+    // Hide Dockview chrome only for the dedicated single diff tab.
+    // Any lone non-diff panel still needs a visible header so it can be
+    // dragged, closed, and used as a way back out of the dock.
+    const updateHeaders = () => {
+      const lonePanel =
+        event.api.totalPanels === 1 && event.api.groups.length === 1
+          ? event.api.groups[0]?.panels[0]
+          : undefined;
+      const hideHeaders = lonePanel?.id === REVIEW_DIFF_PANEL_ID;
+      for (const group of event.api.groups) {
+        group.header.hidden = hideHeaders;
+      }
+    };
+    event.api.onDidAddPanel(updateHeaders);
+    event.api.onDidRemovePanel(updateHeaders);
+    event.api.onDidAddGroup(updateHeaders);
+    event.api.onDidRemoveGroup(updateHeaders);
+    event.api.onDidMovePanel(updateHeaders);
+    event.api.onDidLayoutChange(updateHeaders);
+    updateHeaders();
+  }, []);
+
+  // Create the initial diff panel on first load and after diff switches.
+  useEffect(() => {
+    if (!dockApi || !needsInitialDiffPanel.current || files.length === 0) return;
+    openDiffFile(files[0].path);
+  }, [dockApi, files, openDiffFile]);
+
+
+  // Open agent job detail as center dock panel
+  const handleOpenJobDetail = useCallback((jobId: string) => {
+    const api = dockApi;
+    if (!api) return;
+    const panelId = makeReviewAgentJobPanelId(jobId);
+    const existing = api.getPanel(panelId);
+    if (existing) {
+      existing.api.setActive();
+      return;
+    }
+    const job = agentJobs.jobs.find(j => j.id === jobId);
+    api.addPanel({
+      id: panelId,
+      component: REVIEW_PANEL_TYPES.AGENT_JOB_DETAIL,
+      title: job?.label ?? `Job ${jobId.slice(0, 8)}`,
+      params: { jobId },
+    });
+  }, [dockApi, agentJobs.jobs]);
+
+  // Open PR panel as center dock panel
+  const handleOpenPRPanel = useCallback((type: 'summary' | 'comments' | 'checks') => {
+    const api = dockApi;
+    if (!api) return;
+    const config = {
+      summary: { id: REVIEW_PR_SUMMARY_PANEL_ID, component: REVIEW_PANEL_TYPES.PR_SUMMARY, title: 'PR Summary' },
+      comments: { id: REVIEW_PR_COMMENTS_PANEL_ID, component: REVIEW_PANEL_TYPES.PR_COMMENTS, title: 'PR Comments' },
+      checks: { id: REVIEW_PR_CHECKS_PANEL_ID, component: REVIEW_PANEL_TYPES.PR_CHECKS, title: 'PR Checks' },
+    }[type];
+    const existing = api.getPanel(config.id);
+    if (existing) {
+      existing.api.setActive();
+      return;
+    }
+    api.addPanel({
+      id: config.id,
+      component: config.component,
+      title: config.title,
+    });
+  }, [dockApi]);
+
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Cmd/Ctrl+F to focus search (only when sidebar is rendered)
+      // Cmd/Ctrl+F to focus file search when diff files are available.
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f' && !isTypingTarget(e.target)) {
-        if (files.length > 1 || gitContext?.diffOptions) {
+        if (hasSearchableFiles) {
           e.preventDefault();
           openSearch();
         }
@@ -420,6 +584,12 @@ const ReviewApp: React.FC = () => {
           setShowDestinationMenu(false);
         } else if (showExportModal) {
           setShowExportModal(false);
+        } else if (isSearchOpen) {
+          if (searchQuery) {
+            clearSearch();
+          } else {
+            closeSearch();
+          }
         } else if (searchQuery) {
           clearSearch();
         }
@@ -434,14 +604,8 @@ const ReviewApp: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showExportModal, showDestinationMenu, searchQuery, searchMatches, isSearchPending, openSearch, stepSearchMatch, clearSearch, files, gitContext?.diffOptions]);
+  }, [showExportModal, showDestinationMenu, isSearchOpen, searchQuery, searchMatches, isSearchPending, openSearch, stepSearchMatch, clearSearch, closeSearch, hasSearchableFiles]);
 
-  // Get annotations for active file
-  const activeFileAnnotations = useMemo(() => {
-    const activeFile = files[activeFileIndex];
-    if (!activeFile) return [];
-    return allAnnotations.filter(a => a.filePath === activeFile.path);
-  }, [allAnnotations, files, activeFileIndex]);
 
   // Load diff content - try API first, fall back to demo
   useEffect(() => {
@@ -456,6 +620,7 @@ const ReviewApp: React.FC = () => {
         origin?: Origin;
         diffType?: string;
         gitContext?: GitContext;
+        agentCwd?: string;
         sharingEnabled?: boolean;
         repoInfo?: { display: string; branch?: string };
         prMetadata?: PRMetadata;
@@ -483,6 +648,7 @@ const ReviewApp: React.FC = () => {
         if (data.origin) setOrigin(data.origin);
         if (data.diffType) setDiffType(data.diffType);
         if (data.gitContext) setGitContext(data.gitContext);
+        if (data.agentCwd) setAgentCwd(data.agentCwd);
         if (data.sharingEnabled !== undefined) setSharingEnabled(data.sharingEnabled);
         if (data.repoInfo) setRepoInfo(data.repoInfo);
         if (data.prMetadata) setPrMetadata(data.prMetadata);
@@ -521,7 +687,8 @@ const ReviewApp: React.FC = () => {
     type: CodeAnnotationType,
     text?: string,
     suggestedCode?: string,
-    originalCode?: string
+    originalCode?: string,
+    tokenMeta?: TokenAnnotationMeta
   ) => {
     if (!pendingSelection || !files[activeFileIndex]) return;
 
@@ -540,6 +707,11 @@ const ReviewApp: React.FC = () => {
       text,
       suggestedCode,
       originalCode,
+      ...(tokenMeta && {
+        charStart: tokenMeta.charStart,
+        charEnd: tokenMeta.charEnd,
+        tokenText: tokenMeta.tokenText,
+      }),
       createdAt: Date.now(),
       author: identity,
     };
@@ -611,13 +783,27 @@ const ReviewApp: React.FC = () => {
     ));
   }, []);
 
-  // Switch file - clears pending selection to avoid invalid line ranges
+  // Switch file in the dedicated center diff panel.
+  const handleFilePreview = useCallback((index: number) => {
+    const file = files[index];
+    if (!file) return;
+    openDiffFile(file.path);
+  }, [files, openDiffFile]);
+
+  // Double-click currently behaves the same as single-click.
+  const handleFilePinned = useCallback((index: number) => {
+    const file = files[index];
+    if (!file) return;
+    openDiffFile(file.path);
+  }, [files, openDiffFile]);
+
+  // Legacy file switch (used by handleSelectAnnotation, diff switch, etc.)
   const handleFileSwitch = useCallback((index: number) => {
-    if (index !== activeFileIndex) {
-      setPendingSelection(null);
-      setActiveFileIndex(index);
+    const file = files[index];
+    if (file) {
+      openDiffFile(file.path);
     }
-  }, [activeFileIndex]);
+  }, [files, openDiffFile]);
 
   const handleToggleViewed = useCallback((filePath: string) => {
     setViewedFiles(prev => {
@@ -688,7 +874,10 @@ const ReviewApp: React.FC = () => {
         error?: string;
       };
 
-      setFiles(parseDiffToFiles(data.rawPatch));
+      const nextFiles = parseDiffToFiles(data.rawPatch);
+      dockApi?.getPanel(REVIEW_DIFF_PANEL_ID)?.api.close();
+      needsInitialDiffPanel.current = true;
+      setFiles(nextFiles);
       setDiffType(data.diffType);
       setActiveFileIndex(0);
       setPendingSelection(null);
@@ -700,7 +889,7 @@ const ReviewApp: React.FC = () => {
     } finally {
       setIsLoadingDiff(false);
     }
-  }, [resetStagedFiles]);
+  }, [dockApi, resetStagedFiles]);
 
   // Switch diff type (uncommitted, last-commit, branch) — composes worktree prefix if active
   const handleDiffSwitch = useCallback(async (baseDiffType: string) => {
@@ -736,24 +925,94 @@ const ReviewApp: React.FC = () => {
 
     // Find and switch to the file containing this annotation
     const fileIndex = files.findIndex(f => f.path === annotation.filePath);
-    if (fileIndex !== -1 && fileIndex !== activeFileIndex) {
+    if (fileIndex !== -1) {
       handleFileSwitch(fileIndex);
     }
 
     setSelectedAnnotationId(id);
-  }, [allAnnotations, files, activeFileIndex, handleFileSwitch]);
+  }, [allAnnotations, files, handleFileSwitch]);
+
+  // Build ReviewState value for dock panel context
+  const reviewStateValue = useMemo<ReviewState>(() => ({
+    files,
+    focusedFileIndex: activeFileIndex,
+    focusedFilePath: files[activeFileIndex]?.path ?? null,
+    diffStyle,
+    diffOverflow,
+    diffIndicators,
+    lineDiffType: diffLineDiffType,
+    disableLineNumbers: !diffShowLineNumbers,
+    disableBackground: !diffShowBackground,
+    fontFamily: diffFontFamily || undefined,
+    fontSize: diffFontSize || undefined,
+    allAnnotations,
+    externalAnnotations,
+    selectedAnnotationId,
+    pendingSelection,
+    onLineSelection: handleLineSelection,
+    onAddAnnotation: handleAddAnnotation,
+    onAddFileComment: handleAddFileComment,
+    onEditAnnotation: handleEditAnnotation,
+    onSelectAnnotation: handleSelectAnnotation,
+    onDeleteAnnotation: handleDeleteAnnotation,
+    viewedFiles,
+    onToggleViewed: handleToggleViewed,
+    stagedFiles,
+    stagingFile,
+    onStage: stageFile,
+    canStageFiles,
+    stageError,
+    searchQuery: isSearchPending ? '' : debouncedSearchQuery,
+    isSearchPending,
+    debouncedSearchQuery,
+    activeFileSearchMatches,
+    activeSearchMatchId,
+    activeSearchMatch: activeSearchMatch?.filePath === files[activeFileIndex]?.path ? activeSearchMatch : null,
+    aiAvailable,
+    aiMessages: aiChat.messages,
+    onAskAI: handleAskAI,
+    isAILoading: aiChat.isCreatingSession || aiChat.isStreaming,
+    onViewAIResponse: handleViewAIResponse,
+    onClickAIMarker: handleClickAIMarker,
+    aiHistoryForSelection,
+    agentJobs: agentJobs.jobs,
+    prMetadata,
+    prContext,
+    isPRContextLoading,
+    prContextError,
+    fetchPRContext,
+    platformUser,
+    openDiffFile,
+  }), [
+    files, activeFileIndex, diffStyle, diffOverflow, diffIndicators,
+    diffLineDiffType, diffShowLineNumbers, diffShowBackground,
+    diffFontFamily, diffFontSize, allAnnotations, externalAnnotations,
+    selectedAnnotationId, pendingSelection, handleLineSelection,
+    handleAddAnnotation, handleAddFileComment, handleEditAnnotation,
+    handleSelectAnnotation, handleDeleteAnnotation, viewedFiles,
+    handleToggleViewed, stagedFiles, stagingFile, stageFile,
+    canStageFiles, stageError, isSearchPending, debouncedSearchQuery,
+    activeFileSearchMatches, activeSearchMatchId, activeSearchMatch,
+    aiAvailable, aiChat.messages, aiChat.isCreatingSession, aiChat.isStreaming,
+    handleAskAI, handleViewAIResponse, handleClickAIMarker,
+    aiHistoryForSelection, agentJobs.jobs, prMetadata, prContext,
+    isPRContextLoading, prContextError, fetchPRContext, platformUser, openDiffFile,
+  ]);
+
+  // Separate context for high-frequency job logs — prevents re-rendering all panels on every SSE event
+  const jobLogsValue = useMemo(() => ({ jobLogs: agentJobs.jobLogs }), [agentJobs.jobLogs]);
 
   // Copy raw diff to clipboard
   const handleCopyDiff = useCallback(async () => {
     if (!diffData) return;
     try {
       await navigator.clipboard.writeText(diffData.rawPatch);
-      setCopyFeedback('Diff copied!');
-      setTimeout(() => setCopyFeedback(null), 2000);
+      setCopyRawDiffStatus('success');
+      setTimeout(() => setCopyRawDiffStatus('idle'), 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
-      setCopyFeedback('Failed to copy');
-      setTimeout(() => setCopyFeedback(null), 2000);
+      setCopyRawDiffStatus('error');
+      setTimeout(() => setCopyRawDiffStatus('idle'), 2000);
     }
   }, [diffData]);
 
@@ -775,7 +1034,6 @@ const ReviewApp: React.FC = () => {
     }
   }, [allAnnotations, prMetadata]);
 
-  const activeFile = files[activeFileIndex];
   const feedbackMarkdown = useMemo(() => {
     let output = exportReviewFeedback(allAnnotations, prMetadata);
     if (editorAnnotations.length > 0) {
@@ -1056,58 +1314,73 @@ const ReviewApp: React.FC = () => {
 
   return (
     <ThemeProvider defaultTheme="dark">
+      <ReviewStateProvider value={reviewStateValue}>
+      <JobLogsProvider value={jobLogsValue}>
       <div className="h-screen flex flex-col bg-background overflow-hidden">
         {/* Header */}
-        <header className="h-12 flex items-center justify-between px-2 md:px-4 border-b border-border/50 bg-card/50 backdrop-blur-xl z-50">
-          <div className="flex items-center gap-2 md:gap-3">
-            <a
-              href="https://github.com/backnotprop/plannotator"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 md:gap-2 hover:opacity-80 transition-opacity"
-            >
-              <span className="text-sm font-semibold tracking-tight">Plannotator</span>
-            </a>
-            <a
-              href="https://github.com/backnotprop/plannotator/releases"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-muted-foreground font-mono opacity-60 hidden md:inline hover:opacity-100 transition-opacity"
-            >
-              v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0'}
-            </a>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium hidden md:inline ${
-              prMetadata ? 'bg-violet-500/15 text-violet-400' : 'bg-secondary/15 text-secondary'
-            }`}>
-              {prMetadata ? `${mrLabel} Review` : 'Code Review'}
-            </span>
+        <header className="py-1 flex items-center justify-between px-2 md:px-4 border-b border-border/50 bg-card/50 backdrop-blur-xl z-50">
+          <div className="min-w-0 flex items-center gap-2 md:gap-3">
             {prMetadata ? (
-              <>
-                <span className="text-muted-foreground/40 hidden md:inline">|</span>
-                <span className="text-xs text-muted-foreground/60 hidden md:inline-flex items-center gap-1">
-                  <RepoIcon className="w-3 h-3" />
+              <div className="min-w-0 flex items-center gap-2 md:gap-3">
+                {prMetadata && (gitContext || agentCwd) && (
+                  <button
+                    onClick={() => setShowWorktreeDialog(true)}
+                    className="text-[10px] font-medium text-primary/80 bg-primary/10 hover:bg-primary/20 px-1.5 py-0.5 rounded transition-colors cursor-pointer"
+                  >
+                    worktree
+                  </button>
+                )}
+                <span
+                  className="text-xs text-muted-foreground/60 inline-flex items-center gap-1 truncate max-w-[200px]"
+                  title={displayRepo}
+                >
+                  <RepoIcon className="w-3 h-3 flex-shrink-0" />
                   {displayRepo}
                 </span>
                 <a
                   href={prMetadata.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs text-accent/80 hover:text-accent hidden md:inline-flex items-center gap-1 truncate max-w-[300px] transition-colors"
+                  className="text-xs text-accent/80 hover:text-accent inline-flex items-center gap-1 truncate max-w-[340px] transition-colors"
                   title={prMetadata.title}
                 >
                   <PullRequestIcon className="w-3 h-3 flex-shrink-0" />
-                  {mrNumberLabel} {prMetadata.title}
+                  <span className="font-mono whitespace-nowrap">{mrNumberLabel}</span>
+                  <span className="truncate hidden md:inline">{prMetadata.title}</span>
                 </a>
-              </>
+                <div className="hidden md:flex items-center gap-0.5 ml-1">
+                  <button onClick={() => handleOpenPRPanel('summary')} className="p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/30 transition-colors duration-150" title="PR Summary">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  </button>
+                  <button onClick={() => handleOpenPRPanel('comments')} className="p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/30 transition-colors duration-150" title="PR Comments">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                  </button>
+                  <button onClick={() => handleOpenPRPanel('checks')} className="p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/30 transition-colors duration-150" title="PR Checks">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </button>
+                </div>
+              </div>
             ) : repoInfo ? (
-              <>
-                <span className="text-muted-foreground/40 hidden md:inline">|</span>
-                <span className="text-xs text-muted-foreground/60 hidden md:inline-flex items-center gap-1 truncate max-w-[200px]" title={repoInfo.display}>
+              <div className="min-w-0 flex items-center gap-2 md:gap-3">
+                {repoInfo.branch && (
+                  <span
+                    className="text-xs font-mono text-foreground truncate"
+                    title={repoInfo.branch}
+                  >
+                    {repoInfo.branch}
+                  </span>
+                )}
+                <span
+                  className="text-xs text-muted-foreground/60 inline-flex items-center gap-1 truncate max-w-[220px]"
+                  title={repoInfo.display}
+                >
                   <RepoIcon className="w-3 h-3 flex-shrink-0" />
                   {repoInfo.display}
                 </span>
-              </>
-            ) : null}
+              </div>
+            ) : (
+              <span className="text-xs text-muted-foreground/70">Review</span>
+            )}
           </div>
 
           <div className="flex items-center gap-1 md:gap-2">
@@ -1134,55 +1407,6 @@ const ReviewApp: React.FC = () => {
                 Unified
               </button>
             </div>
-
-            {/* Overflow toggle */}
-            <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
-              <button
-                onClick={() => configStore.set('diffOverflow', 'scroll')}
-                className={`px-2 py-1 text-xs rounded-md transition-colors ${
-                  diffOverflow === 'scroll'
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-                title="Scroll long lines horizontally"
-              >
-                Scroll
-              </button>
-              <button
-                onClick={() => configStore.set('diffOverflow', 'wrap')}
-                className={`px-2 py-1 text-xs rounded-md transition-colors ${
-                  diffOverflow === 'wrap'
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-                title="Wrap long lines"
-              >
-                Wrap
-              </button>
-            </div>
-
-            {/* Primary actions */}
-            <button
-              onClick={handleCopyDiff}
-              className="px-2 py-1 md:px-2.5 rounded-md text-xs font-medium bg-muted hover:bg-muted/80 transition-colors flex items-center gap-1.5"
-              title="Copy all raw diffs (Cmd+Shift+C)"
-            >
-              {copyFeedback === 'Diff copied!' ? (
-                <>
-                  <svg className="w-3.5 h-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                  <span className="hidden md:inline">Copied!</span>
-                </>
-              ) : (
-                <>
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                  <span className="hidden md:inline">Copy Raw Diffs</span>
-                </>
-              )}
-            </button>
 
             {origin ? (
               <>
@@ -1280,7 +1504,9 @@ const ReviewApp: React.FC = () => {
                   isLoading={isSendingFeedback || isPlatformActioning}
                   muted={!platformMode && totalAnnotationCount === 0 && !isSendingFeedback && !isApproving && !isPlatformActioning}
                   label={platformMode ? 'Post Comments' : 'Send Feedback'}
+                  shortLabel={platformMode ? 'Post' : 'Send'}
                   loadingLabel={platformMode ? 'Posting...' : 'Sending...'}
+                  shortLoadingLabel={platformMode ? 'Posting...' : 'Sending...'}
                   title={!platformMode && totalAnnotationCount === 0 ? "Add annotations to send feedback" : "Send feedback"}
                 />
 
@@ -1356,61 +1582,33 @@ const ReviewApp: React.FC = () => {
             <div className="w-px h-5 bg-border/50 mx-1 hidden md:block" />
 
             {/* Utilities */}
-            <ModeToggle />
-            <Settings
-              taterMode={false}
-              onTaterModeChange={() => {}}
-              onIdentityChange={handleIdentityChange}
-              origin={origin}
-              mode="review"
-              aiProviders={aiProviders}
-              gitUser={gitUser}
+            <ReviewHeaderMenu
+              isPanelOpen={isPanelOpen}
+              annotationCount={totalAnnotationCount}
+              onTogglePanel={() => setIsPanelOpen(!isPanelOpen)}
+              onOpenSettings={() => setOpenSettingsMenu(true)}
+              onOpenExport={() => setShowExportModal(true)}
+              appVersion={appVersion}
             />
-
-            {/* Panel toggle */}
-            <button
-              onClick={() => setIsPanelOpen(!isPanelOpen)}
-              className={`p-1.5 rounded-md text-xs font-medium transition-all ${
-                isPanelOpen
-                  ? 'bg-primary/15 text-primary'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-              }`}
-              title={isPanelOpen ? 'Hide annotations' : 'Show annotations'}
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
-              </svg>
-            </button>
-
-            {/* Export */}
-            <button
-              onClick={() => setShowExportModal(true)}
-              className="p-1.5 md:px-2.5 md:py-1 rounded-md text-xs font-medium bg-muted hover:bg-muted/80 transition-colors"
-              title="Export"
-            >
-              <svg className="w-4 h-4 md:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-              </svg>
-              <span className="hidden md:inline">Export</span>
-            </button>
           </div>
         </header>
 
         {/* Main content */}
         <div className={`flex-1 flex overflow-hidden ${isResizing ? 'select-none' : ''}`}>
-          {/* File tree sidebar - show when multiple files OR diff options available */}
-          {(files.length > 1 || gitContext?.diffOptions) && (
+          {/* Left sidebar stays mounted whenever it provides navigation or context. */}
+          {shouldShowFileTree && (
             <>
               <FileTree
                 files={files}
                 activeFileIndex={activeFileIndex}
-                onSelectFile={handleFileSwitch}
+                onSelectFile={handleFilePreview}
+                onDoubleClickFile={handleFilePinned}
                 annotations={allAnnotations}
                 viewedFiles={viewedFiles}
                 onToggleViewed={handleToggleViewed}
                 hideViewedFiles={hideViewedFiles}
                 onToggleHideViewed={() => setHideViewedFiles(prev => !prev)}
-                enableKeyboardNav={!showExportModal}
+                enableKeyboardNav={!showExportModal && hasSearchableFiles}
                 diffOptions={gitContext?.diffOptions}
                 activeDiffType={activeDiffBase}
                 onSelectDiff={handleDiffSwitch}
@@ -1421,23 +1619,29 @@ const ReviewApp: React.FC = () => {
                 onSelectWorktree={handleWorktreeSwitch}
                 currentBranch={gitContext?.currentBranch}
                 stagedFiles={stagedFiles}
-                searchQuery={searchQuery}
+                onCopyRawDiff={handleCopyDiff}
+                canCopyRawDiff={!!diffData?.rawPatch}
+                copyRawDiffStatus={copyRawDiffStatus}
+                searchQuery={hasSearchableFiles ? searchQuery : ''}
+                isSearchOpen={hasSearchableFiles ? isSearchOpen : false}
                 isSearchPending={isSearchPending}
-                searchInputRef={searchInputRef}
-                onSearchChange={handleSearchInputChange}
-                onSearchClear={clearSearch}
-                searchGroups={searchGroups}
-                searchMatches={searchMatches}
-                activeSearchMatchId={activeSearchMatchId}
-                onSelectSearchMatch={handleSelectSearchMatch}
-                onStepSearchMatch={stepSearchMatch}
+                searchInputRef={hasSearchableFiles ? searchInputRef : undefined}
+                onOpenSearch={hasSearchableFiles ? openSearch : undefined}
+                onSearchChange={hasSearchableFiles ? handleSearchInputChange : undefined}
+                onSearchClear={hasSearchableFiles ? clearSearch : undefined}
+                onSearchClose={hasSearchableFiles ? closeSearch : undefined}
+                searchGroups={hasSearchableFiles ? searchGroups : []}
+                searchMatches={hasSearchableFiles ? searchMatches : []}
+                activeSearchMatchId={hasSearchableFiles ? activeSearchMatchId : null}
+                onSelectSearchMatch={hasSearchableFiles ? handleSelectSearchMatch : undefined}
+                onStepSearchMatch={hasSearchableFiles ? stepSearchMatch : undefined}
               />
               <ResizeHandle {...fileTreeResize.handleProps} side="left" />
             </>
           )}
 
-          {/* Diff viewer */}
-          <main className="flex-1 min-w-0 overflow-hidden">
+          {/* Center dock area */}
+          <div className="flex-1 min-w-0 overflow-hidden relative">
             <ConfirmDialog
               isOpen={!!draftBanner}
               onClose={dismissDraft}
@@ -1453,46 +1657,13 @@ const ReviewApp: React.FC = () => {
               cancelText="Dismiss"
               showCancel
             />
-            {activeFile ? (
-              <DiffViewer
-                patch={activeFile.patch}
-                filePath={activeFile.path}
-                oldPath={activeFile.oldPath}
-                diffStyle={diffStyle}
-                diffOverflow={diffOverflow}
-                diffIndicators={diffIndicators}
-                lineDiffType={diffLineDiffType}
-                disableLineNumbers={!diffShowLineNumbers}
-                disableBackground={!diffShowBackground}
-                fontFamily={diffFontFamily || undefined}
-                fontSize={diffFontSize || undefined}
-                annotations={activeFileAnnotations}
-                selectedAnnotationId={selectedAnnotationId}
-                pendingSelection={pendingSelection}
-                onLineSelection={handleLineSelection}
-                onAddAnnotation={handleAddAnnotation}
-                onAddFileComment={handleAddFileComment}
-                onEditAnnotation={handleEditAnnotation}
-                onSelectAnnotation={handleSelectAnnotation}
-                onDeleteAnnotation={handleDeleteAnnotation}
-                isViewed={viewedFiles.has(activeFile.path)}
-                onToggleViewed={() => handleToggleViewed(activeFile.path)}
-                isStaged={stagedFiles.has(activeFile.path)}
-                isStaging={stagingFile === activeFile.path}
-                onStage={() => stageFile(activeFile.path)}
-                canStage={canStageFiles}
-                stageError={stageError}
-                searchQuery={isSearchPending ? '' : debouncedSearchQuery}
-                searchMatches={activeFileSearchMatches}
-                activeSearchMatchId={activeSearchMatchId}
-                activeSearchMatch={activeSearchMatch?.filePath === activeFile.path ? activeSearchMatch : null}
-                aiAvailable={aiAvailable}
-                onAskAI={handleAskAI}
-                isAILoading={aiChat.isCreatingSession || aiChat.isStreaming}
-                onViewAIResponse={handleViewAIResponse}
-                aiMessages={aiMessagesForCurrentFile}
-                onClickAIMarker={handleClickAIMarker}
-                aiHistoryMessages={aiHistoryForSelection}
+            {files.length > 0 ? (
+              <DockviewReact
+                className={`h-full ${resolvedMode === 'light' ? 'dockview-theme-light' : 'dockview-theme-dark'}`}
+                components={reviewPanelComponents}
+                defaultTabComponent={ReviewDockTabRenderer}
+                onReady={handleDockReady}
+                disableFloatingGroups
               />
             ) : (
               <div className="h-full flex items-center justify-center">
@@ -1535,13 +1706,13 @@ const ReviewApp: React.FC = () => {
                 </div>
               </div>
             )}
-          </main>
+          </div>
 
           {/* Resize Handle */}
           {isPanelOpen && <ResizeHandle {...panelResize.handleProps} side="right" />}
 
           {/* Annotations panel */}
-          <ReviewPanel
+          <ReviewSidebar
             isOpen={isPanelOpen}
             onToggle={() => setIsPanelOpen(!isPanelOpen)}
             annotations={allAnnotations}
@@ -1559,8 +1730,8 @@ const ReviewApp: React.FC = () => {
             isAICreatingSession={aiChat.isCreatingSession}
             isAIStreaming={aiChat.isStreaming}
             onScrollToAILines={handleScrollToAILines}
-            activeTabOverride={reviewPanelTabOverride}
-            onTabChange={() => setReviewPanelTabOverride(undefined)}
+            activeTabOverride={sidebarTabOverride}
+            onTabChange={() => setSidebarTabOverride(undefined)}
             activeFilePath={files[activeFileIndex]?.path}
             scrollToQuestionId={scrollToQuestionId}
             onAskGeneral={handleAskGeneral}
@@ -1576,6 +1747,8 @@ const ReviewApp: React.FC = () => {
             onAgentKillJob={agentJobs.killJob}
             onAgentKillAll={agentJobs.killAll}
             externalAnnotations={externalAnnotations}
+            onOpenJobDetail={handleOpenJobDetail}
+            onOpenPRPanel={handleOpenPRPanel}
           />
         </div>
 
@@ -1614,6 +1787,47 @@ const ReviewApp: React.FC = () => {
               </div>
             </div>
           </div>
+        )}
+
+        <div className="hidden" aria-hidden="true">
+          <Settings
+            taterMode={false}
+            onTaterModeChange={() => {}}
+            onIdentityChange={handleIdentityChange}
+            origin={origin}
+            mode="review"
+            aiProviders={aiProviders}
+            gitUser={gitUser}
+            externalOpen={openSettingsMenu}
+            onExternalClose={() => setOpenSettingsMenu(false)}
+          />
+        </div>
+
+        {/* Worktree info dialog */}
+        {(gitContext?.cwd || agentCwd) && prMetadata && (
+          <ConfirmDialog
+            isOpen={showWorktreeDialog}
+            onClose={() => setShowWorktreeDialog(false)}
+            title="Local Worktree"
+            wide
+            message={
+              <div className="space-y-3">
+                <p>This PR is checked out locally so review agents have full file access.</p>
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-semibold">Path</span>
+                  <button
+                    onClick={() => navigator.clipboard.writeText((agentCwd || gitContext?.cwd)!)}
+                    className="mt-1 w-full text-left font-mono text-xs bg-muted/50 border border-border/50 rounded-md px-3 py-2 text-foreground hover:bg-muted transition-colors cursor-pointer break-all"
+                    title="Click to copy"
+                  >
+                    {agentCwd || gitContext?.cwd}
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground/60">Automatically removed when this review session ends.</p>
+              </div>
+            }
+            variant="info"
+          />
         )}
 
         {/* No annotations dialog */}
@@ -1730,6 +1944,8 @@ const ReviewApp: React.FC = () => {
           </div>
         )}
       </div>
+    </JobLogsProvider>
+    </ReviewStateProvider>
     </ThemeProvider>
   );
 };

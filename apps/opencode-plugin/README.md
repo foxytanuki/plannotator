@@ -56,7 +56,7 @@ Restart OpenCode. The `submit_plan` tool is now available.
 
 | Variable | Description |
 |----------|-------------|
-| `PLANNOTATOR_REMOTE` | Set to `1` for remote mode (devcontainer, SSH). Prints the URL, skips browser open, and falls back across `19432-19439` by default. |
+| `PLANNOTATOR_REMOTE` | Set to `1` / `true` for remote mode, `0` / `false` for local mode, or leave unset for SSH auto-detection. Remote mode uses the `19432-19439` fallback range by default; browser-opening behavior depends on the environment. |
 | `PLANNOTATOR_PORT` | Exact port to use. Default: random locally, `19432-19439` fallback for remote sessions. |
 | `PLANNOTATOR_BROWSER` | Custom browser to open plans in. macOS: app name or path. Linux/Windows: executable path. |
 | `PLANNOTATOR_SHARE_URL` | Custom share portal URL for self-hosting. Default: `https://share.plannotator.ai`. |
@@ -76,7 +76,7 @@ Works in containerized environments. Set `PLANNOTATOR_REMOTE=1` and optionally p
 }
 ```
 
-Then open `http://localhost:9999` when `submit_plan` is called.
+If nothing opens automatically, open `http://localhost:9999` when `submit_plan` is called.
 
 See [devcontainer.md](./devcontainer.md) for full setup details.
 
